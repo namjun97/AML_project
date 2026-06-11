@@ -61,14 +61,31 @@ RUN pip install --no-cache-dir \
     "langchain-community>=0.3.1" \
     "langchain-core>=0.3.0"
 
+# ── RAG 지식베이스 사전 빌드 (콜드 스타트 단축) ───────────────────────
+# 1) HF_HOME 을 이미지 내부로 고정 → 임베딩 모델(MiniLM-L12, 다국어)을
+#    빌드 타임에 다운로드해 캐시로 굽는다 (런타임 다운로드 제거)
+# 2) PDF 파싱 + 청킹 + CPU 임베딩 + ChromaDB 빌드를 빌드 타임에 수행
+#    → 런타임에는 kb.is_built() == True 로 재빌드를 건너뛴다
+# 주의: 이 레이어는 knowledge/ 또는 knowledge_base/ 변경 시에만 재빌드되도록
+#       app.py 등 나머지 소스 복사보다 앞에 배치한다 (레이어 캐시 활용)
+ENV HF_HOME=/app/.cache/huggingface
+
+COPY knowledge/ ./knowledge/
+COPY knowledge_base/ ./knowledge_base/
+
+RUN python -c "\
+from knowledge.rag_knowledge_base import KnowledgeBase; \
+kb = KnowledgeBase(pdf_directory='knowledge_base', persist_dir='chroma_db'); \
+kb.build(); \
+assert kb.is_built(), 'ChromaDB prebuild failed'; \
+print('[Docker] ChromaDB prebuild OK')"
+
 # ── 앱 소스 복사 ──────────────────────────────────────────────────────
 COPY app.py .
 COPY analysis/ ./analysis/
 COPY loaders/ ./loaders/
 COPY models/ ./models/
 COPY reporters/ ./reporters/
-COPY knowledge/ ./knowledge/
-COPY knowledge_base/ ./knowledge_base/
 COPY tools/ ./tools/
 COPY neo4j_config.py .
 COPY NanumGothic*.ttf ./

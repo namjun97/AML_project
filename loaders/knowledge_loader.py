@@ -20,9 +20,11 @@ def load_knowledge_base() -> KnowledgeBase:
     return kb
 
 
-@st.cache_resource(show_spinner="🔗 Neo4j 그래프 DB 연결 중...")
+@st.cache_resource(show_spinner="🔗 Neo4j GraphRAG 준비 중...")
 def load_graph_retriever() -> GraphRAGRetriever:
-    return get_graph_retriever()
+    # lazy=True: 앱 기동 시 AuraDB TLS 연결(최대 30초)을 건너뛰고
+    # 첫 SAR 생성(format_context 호출) 시점에 연결한다.
+    return get_graph_retriever(lazy=True)
 
 
 # ======================================================================
@@ -59,7 +61,12 @@ def init_knowledge_resources() -> KnowledgeResources:
 
     try:
         graph_retriever = load_graph_retriever()
-        graph_available = graph_retriever.is_available
+        # lazy 모드: 아직 연결 전이면 접속 정보 유무로 낙관적 판단.
+        # 실제 연결 실패는 첫 사용 시 빈 graph_context 로 우아하게 강등된다.
+        if graph_retriever.connect_attempted:
+            graph_available = graph_retriever.is_available
+        else:
+            graph_available = graph_retriever.is_configured
     except Exception as exc:
         graph_error = str(exc)
 

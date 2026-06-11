@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import requests
 
 import matplotlib.pyplot as plt
@@ -22,6 +25,7 @@ from reporters.ai_report_generator import (
 from reporters.context_builder import ContextBuilder
 from reporters.pdf_report_generator import create_pdf_report
 from reporters.report_runner import ReportRunner
+from reporters.sar_graph import build_sar_graph
 
 
 # 0. 페이지 설정
@@ -52,7 +56,12 @@ if kr.rag_error:
         f"⚠️ 텍스트 RAG 초기화 실패: {kr.rag_error}\n\n"
         "`ollama pull nomic-embed-text` 실행 후 앱을 재시작하세요."
     )
-if kr.graph_available:
+if kr.graph_retriever is not None and not kr.graph_retriever.connect_attempted:
+    if kr.graph_available:
+        st.sidebar.info("🗄️ Neo4j GraphRAG — 첫 SAR 생성 시 연결 (지연 연결)")
+    else:
+        st.sidebar.info("ℹ️ Neo4j 접속 정보 없음 — 텍스트 RAG만 사용")
+elif kr.graph_available:
     st.sidebar.success("🗄️ Neo4j GraphRAG 연결됨")
 else:
     st.sidebar.info("ℹ️ Neo4j 미연결 — 텍스트 RAG만 사용")
@@ -65,6 +74,14 @@ context_builder = ContextBuilder(
     graph_available = kr.graph_available,
 )
 report_runner = ReportRunner(context_builder)
+
+
+@st.cache_resource
+def get_sar_graph():
+    return build_sar_graph(context_builder, report_runner)
+
+
+sar_graph = get_sar_graph()
 
 # ======================================================================
 # 3. 세션 상태 초기화
@@ -308,6 +325,90 @@ with st.spinner("분석 중......"):
         st.session_state.ai_report_content  = final_report
         st.session_state.rag_context_used   = rag_context
         st.session_state.graph_context_used = graph_context
+
+    # 5-7b. LangGraph SAR 생성 — 노드별 실시간 진행 상황 표시
+    if st.button("🔗 LangGraph SAR 생성 (classify → retrieve → integrate → generate → validate)"):
+
+        _NODE_META = [
+            ("classify",  "🏷️ 질의 분류"),
+            ("retrieve",  "📚 RAG 검색 (network=Hybrid / standard=Vector)"),
+            ("integrate", "🔗 컨텍스트 앙상블"),
+            ("generate",  "✍️ Groq LLM SAR 생성"),
+            ("validate",  "✅ 법령 근거 검증"),
+        ]
+        # 조건부 분기 노드는 UI 상 같은 단계로 표시
+        _NODE_ALIAS = {"retrieve_vector": "retrieve"}
+
+        st.markdown("**LangGraph 파이프라인**")
+        _ph = {name: st.empty() for name, _ in _NODE_META}
+        for _n, _lbl in _NODE_META:
+            _ph[_n].markdown(f"⬜ {_lbl}")
+        _ph["classify"].markdown("⏳ 🏷️ 질의 분류 실행 중...")
+
+        try:
+            _inputs = {
+                "sar_payload":  sar_payload,
+                "sar_json_str": sar_json_str,
+                "node_idx":     selected_idx,
+            }
+            _state: dict = dict(_inputs)
+            _completed: list[str] = []
+            _node_names = [n for n, _ in _NODE_META]
+
+            for _event in sar_graph.stream(_inputs, stream_mode="updates"):
+                _raw_name = next(iter(_event))
+                if _raw_name == "__end__":
+                    continue
+
+                # 상태 누적
+                for _k, _v in _event[_raw_name].items():
+                    _state[_k] = _v
+
+                _node_name = _NODE_ALIAS.get(_raw_name, _raw_name)
+
+                # 완료 노드 체크마크
+                if _node_name in _ph:
+                    _lbl = dict(_NODE_META)[_node_name]
+                    _ph[_node_name].markdown(f"✅ {_lbl}")
+                    _completed.append(_node_name)
+
+                # 다음 노드 '실행 중' 표시
+                if _node_name in _node_names:
+                    _next_idx = _node_names.index(_node_name) + 1
+                    if _next_idx < len(_NODE_META):
+                        _next_name, _next_lbl = _NODE_META[_next_idx]
+                        if _next_name not in _completed:
+                            _ph[_next_name].markdown(f"⏳ {_next_lbl} 실행 중...")
+
+            # 결과 추출
+            final_report = _state.get("final_report", "")
+            is_valid     = _state.get("is_valid", False)
+            query_type   = _state.get("query_type", "")
+            rag_scores   = _state.get("rag_scores") or []
+
+            # 메트릭 표시
+            _mc1, _mc2, _mc3 = st.columns(3)
+            _mc1.metric("질의 유형",     query_type)
+            _mc2.metric("법령 근거",     "✅ 포함" if is_valid else "⚠️ 미포함")
+            if rag_scores:
+                _avg_score = sum(r.get("score", 0) for r in rag_scores) / len(rag_scores)
+                _mc3.metric("RAG 평균 유사도", f"{_avg_score:.2f}")
+
+            st.markdown(
+                "<div style='background:#f0f2f6;padding:20px;border-radius:8px;"
+                "border-left:5px solid #6366f1;color:#1f2937;line-height:1.6;"
+                "font-family:monospace;white-space:pre-wrap;'>"
+                + final_report.replace("<", "&lt;").replace(">", "&gt;")
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+
+            st.session_state.ai_report_content  = final_report
+            st.session_state.rag_context_used   = _state.get("rag_context", "")
+            st.session_state.graph_context_used = _state.get("graph_context", "")
+
+        except Exception as _exc:
+            st.error(f"❌ LangGraph 실행 오류: {_exc}")
 
     # 5-8. 다운로드 버튼
     if st.session_state.ai_report_content:
