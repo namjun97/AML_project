@@ -1,4 +1,6 @@
 # AML Detection System - Requirements
+
+# Core ML
 streamlit==1.31.1
 pandas
 numpy
@@ -13,19 +15,32 @@ matplotlib
 requests
 PyPDF2
 fpdf2
-chromadb
-# ── LLM: Groq API (SAR 보고서 생성) ───────────────────────────────
+
+# ChromaDB
+chromadb==0.5.23
+
+# LLM - Groq API
 groq>=0.9.0
-# ── RAG 임베딩 (API 키 불필요, sentence-transformers 기반) ──────────
+
+# RAG / LangChain ecosystem (pinned to avoid backtracking)
+langsmith==0.3.45
+langchain-core==0.3.86
+langchain-text-splitters==0.3.11
+langchain-community==0.3.20
+langchain-huggingface==0.1.2
 sentence-transformers>=2.6.0
-langchain-huggingface>=0.0.3
-langchain-text-splitters>=0.2.0
-# ── Phase 3: GraphRAG ──────────────────────────────────────────────
-neo4j>=5.0.0
-langchain-neo4j>=0.3.0
-langchain-community>=0.3.1
-langchain-core>=0.3.0
-# ── 누락 라이브러리 추가 ────────────────────────────────────────────
-pyvis == 0.3.2
+
+# Neo4j / GraphRAG (pinned to avoid neo4j-graphrag cascade)
+neo4j==5.28.0
+langchain-neo4j==0.3.0
+
+# Visualization
+pyvis==0.3.2
 pytz
 python-dateutil
+
+# LangGraph
+langgraph>=0.2.0,<1.0.0
+
+# Env / LangSmith
+python-dotenv>=1.0.0

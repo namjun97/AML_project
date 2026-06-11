@@ -32,6 +32,7 @@ ENV/
 # ──────────────────────────────────────
 .env
 .env.*
+!.env.example
 secrets.toml
 .streamlit/secrets.toml
 
@@ -85,3 +86,9 @@ Thumbs.db
 # pytest 캐시
 # ──────────────────────────────────────
 .pytest_cache/
+
+# ──────────────────────────────────────
+# 개인 파일 (공개 저장소 제외)
+# ──────────────────────────────────────
+lawide_interview_prep.md
+CLAUDE.md
