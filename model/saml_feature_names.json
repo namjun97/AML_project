@@ -1,0 +1,22 @@
+{
+  "node_features": [
+    "out_count",
+    "in_count",
+    "out_amount_log",
+    "in_amount_log",
+    "out_mean_log",
+    "in_mean_log",
+    "unique_receivers",
+    "unique_senders",
+    "cross_border_ratio",
+    "currency_mismatch_ratio",
+    "passthrough_ratio"
+  ],
+  "edge_features": [
+    "log_amount",
+    "ptype_enc",
+    "cross_border",
+    "currency_mismatch",
+    "time_norm"
+  ]
+}

@@ -10,9 +10,9 @@ from models.embedding_extractor import EmbeddingExtractor, predict_fraud_probs
 
 @st.cache_resource
 def load_resources(
-    graph_path: str = "model/processed_graph_data.pt",
-    gnn_path: str = "gnn_model.pth",
-    xgb_path: str = "fraud_model.pkl",
+    graph_path: str = "model/saml_graph.pt",
+    gnn_path: str = "model/saml_gnn.pth",
+    xgb_path: str = "model/saml_fraud_model.pkl",
 ) -> tuple:
     # 1-1. 그래프 데이터 로드
     graph_dict = torch.load(graph_path, map_location="cpu")
@@ -67,8 +67,8 @@ def get_sorted_test_nodes(
     # 임베딩 (미리 계산된 값에서 인덱싱)
     test_embeddings = _all_embs[test_idx]
 
-    # 원본 피처 (10개)
-    test_orig = _graph_dict["x"][test_idx, -10:].numpy()
+    # 원본 노드 피처 전체 (graph_dict["x"] 가 곧 노드 피처 — SAML 11개)
+    test_orig = _graph_dict["x"][test_idx].numpy()
 
     # 사기 확률 예측 — 학습과 동일한 [원본, 임베딩] 순서 + 스케일러 (단일 헬퍼)
     probs = predict_fraud_probs(test_embeddings, test_orig, _xgb_model, _scaler)
@@ -77,7 +77,7 @@ def get_sorted_test_nodes(
         {
             "node_idx": test_idx,
             "fraud_prob": probs,
-            "key_feature": _graph_dict["x"][test_idx, -10].numpy(),
+            "key_feature": _graph_dict["x"][test_idx, 0].numpy(),
         }
     ).sort_values(by="fraud_prob", ascending=False)
 

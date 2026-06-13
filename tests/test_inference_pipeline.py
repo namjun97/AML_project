@@ -182,3 +182,50 @@ class TestShapAnalyzerNative:
         recon  = 1.0 / (1.0 + np.exp(-margin))
         proba  = model.predict_proba(X[:5])[:, 1]
         assert np.allclose(recon, proba, atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# 4. SAML-D 파이프라인 회귀 (활성 모델 — 실제 아티팩트 필요시만)
+# ---------------------------------------------------------------------------
+
+_SAML_GRAPH = ROOT / "model" / "saml_graph.pt"
+_SAML_GNN = ROOT / "model" / "saml_gnn.pth"
+_SAML_XGB = ROOT / "model" / "saml_fraud_model.pkl"
+_SAML_MAP = ROOT / "model" / "saml_node_mapping.csv"
+_SAML_PRESENT = _SAML_GRAPH.exists() and _SAML_GNN.exists() and _SAML_XGB.exists()
+
+
+@pytest.mark.skipif(not _SAML_PRESENT, reason="SAML-D 아티팩트 없음")
+class TestSamlPipeline:
+    @pytest.fixture(scope="class")
+    def scored(self):
+        import torch, joblib
+        from models.embedding_extractor import EmbeddingExtractor
+        g = torch.load(str(_SAML_GRAPH), map_location="cpu")
+        ex = EmbeddingExtractor(in_channels=g["x"].shape[1], hidden_channels=128, embed_dim=64)
+        ex.load_state_dict(torch.load(str(_SAML_GNN), map_location="cpu"))
+        ex.eval()
+        with torch.no_grad():
+            emb = ex(g["x"], g["edge_index"]).numpy()
+        data = joblib.load(str(_SAML_XGB))
+        probs = predict_fraud_probs(emb, g["x"].numpy(), data["xgb_model"], data.get("scaler"))
+        return probs, g["y"].numpy(), g["test_mask"].numpy().astype(bool)
+
+    def test_test_auc_above_0_9(self, scored):
+        from sklearn.metrics import roc_auc_score
+        probs, y, tm = scored
+        assert roc_auc_score(y[tm], probs[tm]) > 0.9
+
+    def test_high_confidence_is_calibrated(self, scored):
+        """prob>=0.9 구간 정밀도가 기저율보다 훨씬 높아야 (보정 확인)."""
+        probs, y, tm = scored
+        sel = tm & (probs >= 0.9)
+        if sel.sum() >= 20:
+            assert y[sel].mean() > 0.6   # 기저율 ~5.6% 대비 매우 높음
+
+    def test_node_mapping_aligned(self):
+        """매핑 y == 그래프 y 100% (P0 정합성 — 구성상 보장)."""
+        import torch, pandas as pd
+        g = torch.load(str(_SAML_GRAPH), map_location="cpu")
+        m = pd.read_csv(str(_SAML_MAP))
+        assert (m["y"].values == g["y"].numpy()).mean() == 1.0

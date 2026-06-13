@@ -143,10 +143,11 @@ if not st.session_state.analysis_done:
 
 with st.spinner("분석 중......"):
     # 5-1. 임베딩 인덱싱 + XGBoost 예측
-    #   학습과 동일하게 [원본10, 임베딩64] 결합 후 74-dim 스케일러 적용.
+    #   학습과 동일하게 [노드피처, 임베딩64] 결합 후 스케일러 적용.
+    #   (graph_dict["x"] 가 곧 노드 피처 — 전체 컬럼을 orig 으로 사용)
     #   (X_input 은 모델이 실제로 보는 입력 = SHAP 설명 대상)
     node_emb  = all_embs_cached[selected_idx].reshape(1, -1)
-    node_orig = graph_dict["x"][selected_idx][-10:].reshape(1, -1).numpy()
+    node_orig = graph_dict["x"][selected_idx].reshape(1, -1).numpy()
     X_input   = build_hybrid_features(node_orig, node_emb)
     if scaler is not None:
         X_input = scaler.transform(X_input).astype(np.float32)
@@ -193,8 +194,9 @@ with st.spinner("분석 중......"):
 
     with col2:
         st.write("#### 2. 원본 피처 데이터 정보")
-        # 재정렬된 feature_names 에서 원본 집계 10개는 앞쪽에 위치 (node_orig 컬럼과 정렬됨)
-        orig_feature_names = feature_names[:10]
+        # 재정렬된 feature_names 에서 노드 피처는 앞쪽에 위치 (node_orig 컬럼과 정렬됨)
+        _n_node_feats = graph_dict["x"].shape[1]
+        orig_feature_names = feature_names[:_n_node_feats]
         orig_df = pd.DataFrame(node_orig, columns=orig_feature_names)
 
         # z-score 수치 + 수준 레이블을 한 열에 함께 표시

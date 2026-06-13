@@ -47,8 +47,12 @@ secrets.toml
 # ──────────────────────────────────────
 # 대용량 데이터셋 (Git LFS 사용 권장)
 # ──────────────────────────────────────
-# dataset/paysim1.csv  ← 원본 대용량 파일만 제외
-dataset/paysim1.csv
+# 원본 대용량 데이터셋 CSV 전체 제외 (paysim1.csv ~493MB, SAML-D.csv ~996MB)
+dataset/*.csv
+
+# SAML 일회성(DB 적재 전용) 대용량 산출물 — 런타임 불필요, 재생성 가능
+model/saml_edges.parquet
+model/saml_node_features_raw.csv
 
 # ──────────────────────────────────────
 # ChromaDB (런타임 생성, 추적 불필요)

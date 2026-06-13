@@ -248,21 +248,23 @@ def _humanize_feature_value(z_score: float, feature_name: str) -> dict:
     # (high z 의미, low z 의미) — 과거에는 거래 단위 피처명만 있어 실제 피처가
     # 기본값 "<name> 수치 높음/낮음" 으로 떨어져 해석 불가였음.
     feature_context: dict[str, tuple[str, str]] = {
-        "send_count":       ("송금 건수 비정상적으로 많음",       "송금 건수 적음"),
-        "send_total":       ("총 송금 규모 큼",                  "총 송금 규모 작음"),
-        "send_mean":        ("평균 송금액 큼",                   "평균 송금액 작음"),
-        "send_max":         ("최대 단일 송금액 큼",              "최대 단일 송금액 작음"),
-        "recv_count":       ("수취 건수 비정상적으로 많음",       "수취 건수 적음"),
-        "recv_total":       ("총 수취 규모 큼",                  "총 수취 규모 작음"),
-        "recv_mean":        ("평균 수취액 큼",                   "평균 수취액 작음"),
+        # SAML-D 네트워크/모티프 피처 (자금세탁 유형 신호)
+        "out_count":               ("송금 거래 빈도 비정상적으로 높음",  "송금 거래 적음"),
+        "in_count":                ("수취 거래 빈도 비정상적으로 높음",  "수취 거래 적음"),
+        "out_amount_log":          ("총 송금 규모 큼",                  "총 송금 규모 작음"),
+        "in_amount_log":           ("총 수취 규모 큼",                  "총 수취 규모 작음"),
+        "out_mean_log":            ("평균 송금액 큼",                   "평균 송금액 작음"),
+        "in_mean_log":             ("평균 수취액 큼",                   "평균 수취액 작음"),
+        "unique_receivers":        ("다수 계좌로 분산 송금 (팬아웃 — 자금 분산 정황)", "송금 대상 소수"),
+        "unique_senders":          ("다수 계좌로부터 자금 집결 (팬인 — 스머핑 정황)",  "수취 출처 소수"),
+        "cross_border_ratio":      ("국가 간 거래 비중 높음 (역외 이전 정황)",      "국내 거래 위주"),
+        "currency_mismatch_ratio": ("송금·수취 통화 불일치 빈번 (환치기 정황)",     "통화 일관"),
+        "passthrough_ratio":       ("받은 자금을 곧바로 송금 (경유 계좌 정황)",     "경유 성격 약함"),
+        # (하위 호환) PaySim 시절 피처명
+        "send_count":       ("송금 건수 많음",       "송금 건수 적음"),
+        "recv_count":       ("수취 건수 많음",       "수취 건수 적음"),
         "zero_balance_cnt": ("송금 후 잔액 0 빈번 (계좌 비우기 의심)", "잔액 소진 거래 드묾"),
-        "empty_acct_recv":  ("빈 계좌로의 수취 빈번 (자금 경유 의심)", "정상 잔액 계좌로 수취"),
-        "mismatch_sum":     ("잔액 불일치 누적 큼 (자금 은닉 의심)",   "잔액 정합성 양호"),
-        # (하위 호환) 과거 거래 단위 피처명
-        "amount":           ("대규모 거래 금액",              "소규모 거래 금액"),
-        "log_amount":       ("대규모 거래 금액 (로그)",        "소규모 거래 금액 (로그)"),
-        "balance_mismatch": ("잔액 불일치 심각 (자금 은닉 의심)", "잔액 정상 범위"),
-        "hour_of_day_norm": ("비정상 시간대 거래 (심야·새벽)", "일반 업무 시간대 거래"),
+        "mismatch_sum":     ("잔액 불일치 누적 큼", "잔액 정합성 양호"),
     }
 
     ctx_high, ctx_low = feature_context.get(
@@ -442,15 +444,22 @@ def build_sar_payload(
     #   기술해야 영향도와 모순되지 않는다. 행동 피처는 평문 지표명으로, GNN 임베딩은
     #   기여 크기 합으로 집約한다. (개수 집계는 큰 기여를 놓쳐 방향을 오판함)
     _BEHAVIORAL_DOMAIN = {
+        # SAML-D 네트워크/모티프 지표
+        "out_count":               "송금 거래 빈도",
+        "in_count":                "수취 거래 빈도",
+        "out_amount_log":          "총 송금 규모",
+        "in_amount_log":           "총 수취 규모",
+        "out_mean_log":            "평균 송금액",
+        "in_mean_log":             "평균 수취액",
+        "unique_receivers":        "송금 대상 계좌 수(팬아웃·자금 분산)",
+        "unique_senders":          "수취 출처 계좌 수(팬인·자금 집결)",
+        "cross_border_ratio":      "국가 간 거래 비중(역외 이전)",
+        "currency_mismatch_ratio": "통화 불일치 비중(환치기)",
+        "passthrough_ratio":       "자금 경유 비율(받은 즉시 송금)",
+        # (하위 호환)
         "send_count":       "송금 거래 빈도",
-        "send_total":       "총 송금 규모",
-        "send_mean":        "평균 송금액",
-        "send_max":         "최대 단일 송금액",
         "recv_count":       "수취 거래 빈도",
-        "recv_total":       "총 수취 규모",
-        "recv_mean":        "평균 수취액",
         "zero_balance_cnt": "송금 후 잔액 소진(계좌 비우기) 빈도",
-        "empty_acct_recv":  "빈 계좌로의 수취(자금 경유) 빈도",
         "mismatch_sum":     "잔액 불일치(자금 은닉) 누적",
     }
 
