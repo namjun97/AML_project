@@ -142,3 +142,43 @@ class TestPipelineAUCRegression:
         import joblib
         data = joblib.load(str(_XGB))
         assert data.get("scaler") is not None
+
+
+# ---------------------------------------------------------------------------
+# 3. ShapAnalyzer 네이티브 경로 (shap base_score 버그 우회)
+# ---------------------------------------------------------------------------
+
+class TestShapAnalyzerNative:
+    """XGBoost 3.x + shap 0.49 의 base_score 파싱 버그를 네이티브 pred_contribs 로
+    우회하는지 검증. (작은 in-memory 모델로 빠르게 — 외부 아티팩트 불필요)"""
+
+    def _tiny_model(self):
+        xgb = pytest.importorskip("xgboost")
+        from sklearn.datasets import make_classification
+        X, y = make_classification(
+            n_samples=200, n_features=8, n_informative=5, random_state=0
+        )
+        model = xgb.XGBClassifier(n_estimators=15, max_depth=3, random_state=0)
+        model.fit(X, y)
+        return model, X.astype(np.float32), y
+
+    def test_uses_native_path(self):
+        from analysis.shap_analyzer import ShapAnalyzer
+        model, X, _ = self._tiny_model()
+        an = ShapAnalyzer(model)
+        an.build_explainer(X[:5])
+        assert an._use_native is True
+        assert an.is_kernel is False
+
+    def test_shap_values_reconstruct_margin(self):
+        """expected_value + Σshap = 모델 마진(logit) — TreeSHAP 합치성."""
+        from analysis.shap_analyzer import ShapAnalyzer
+        model, X, _ = self._tiny_model()
+        an = ShapAnalyzer(model)
+        an.build_explainer(X[:5])
+        sv = an.compute_shap_values(X[:5])
+        assert sv.shape == (5, 8)
+        margin = an.expected_value + sv.sum(axis=1)
+        recon  = 1.0 / (1.0 + np.exp(-margin))
+        proba  = model.predict_proba(X[:5])[:, 1]
+        assert np.allclose(recon, proba, atol=1e-4)
