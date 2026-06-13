@@ -6,5 +6,6 @@
 *.ttf  filter=lfs diff=lfs merge=lfs -text
 *.otf  filter=lfs diff=lfs merge=lfs -text
 *.png  filter=lfs diff=lfs merge=lfs -text
-*.jpg  filter=lfs diff=lfs merge=lfs -text
-*.jpeg filter=lfs diff=lfs merge=lfs -text
+# JPG 스크린샷(10~120KB)은 LFS 미사용 — 일반 git 파일로 저장.
+# (과거 LFS 포인터만 커밋되고 실제 블롭이 GitHub LFS 에 없어 HF Spaces 배포가
+#  'LFS pointer pointed to a file that does not exist' 로 거부됐음)
