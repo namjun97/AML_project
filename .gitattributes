@@ -1,11 +1,12 @@
-# Git LFS — 바이너리 파일 추적 (HF Spaces 필수)
+# Git LFS — 대용량 PDF/폰트만 (지식베이스 원본·한글 폰트)
 *.pdf  filter=lfs diff=lfs merge=lfs -text
-*.pth  filter=lfs diff=lfs merge=lfs -text
-*.pkl  filter=lfs diff=lfs merge=lfs -text
-*.pt   filter=lfs diff=lfs merge=lfs -text
 *.ttf  filter=lfs diff=lfs merge=lfs -text
 *.otf  filter=lfs diff=lfs merge=lfs -text
 *.png  filter=lfs diff=lfs merge=lfs -text
+# 모델 아티팩트(*.pt/.pth/.pkl, 모두 <15MB)는 LFS 미사용 — 일반 git blob 으로 저장.
+# (LFS 포인터로 커밋되면 CI/HF 배포 checkout 이 LFS 미수신 시 'version https://...'
+#  스텁만 받아 torch.load/joblib.load 가 invalid load key 'v' 로 실패. PaySim 아티팩트와
+#  동일하게 일반 blob 으로 통일한다.)
 # JPG 스크린샷(10~120KB)은 LFS 미사용 — 일반 git 파일로 저장.
 # (과거 LFS 포인터만 커밋되고 실제 블롭이 GitHub LFS 에 없어 HF Spaces 배포가
 #  'LFS pointer pointed to a file that does not exist' 로 거부됐음)

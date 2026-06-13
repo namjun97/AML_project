@@ -26,6 +26,12 @@ from models.embedding_extractor import (
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _loadable(p: Path, min_kb: int = 50) -> bool:
+    """실제 바이너리 아티팩트인지 확인 (Git LFS 포인터 스텁 ~130B 은 제외).
+    CI/배포에서 LFS 미수신 시 포인터를 torch.load 하다 실패하는 것을 회피."""
+    return p.exists() and p.stat().st_size > min_kb * 1024
+
+
 # ---------------------------------------------------------------------------
 # 1. 순수 단위 테스트 (아티팩트 불필요)
 # ---------------------------------------------------------------------------
@@ -98,7 +104,7 @@ class TestPredictFraudProbs:
 _GRAPH = ROOT / "model" / "processed_graph_data.pt"
 _GNN   = ROOT / "gnn_model.pth"
 _XGB   = ROOT / "fraud_model.pkl"
-_ARTIFACTS_PRESENT = _GRAPH.exists() and _GNN.exists() and _XGB.exists()
+_ARTIFACTS_PRESENT = _loadable(_GRAPH) and _loadable(_GNN) and _loadable(_XGB)
 
 
 @pytest.mark.skipif(not _ARTIFACTS_PRESENT, reason="모델 아티팩트 없음 (.pt/.pth/.pkl)")
@@ -192,7 +198,7 @@ _SAML_GRAPH = ROOT / "model" / "saml_graph.pt"
 _SAML_GNN = ROOT / "model" / "saml_gnn.pth"
 _SAML_XGB = ROOT / "model" / "saml_fraud_model.pkl"
 _SAML_MAP = ROOT / "model" / "saml_node_mapping.csv"
-_SAML_PRESENT = _SAML_GRAPH.exists() and _SAML_GNN.exists() and _SAML_XGB.exists()
+_SAML_PRESENT = _loadable(_SAML_GRAPH) and _loadable(_SAML_GNN) and _loadable(_SAML_XGB)
 
 
 @pytest.mark.skipif(not _SAML_PRESENT, reason="SAML-D 아티팩트 없음")
