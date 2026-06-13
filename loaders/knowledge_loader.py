@@ -9,7 +9,7 @@ from knowledge.rag_knowledge_base import KnowledgeBase
 
 # Streamlit 캐시 초기화 함수 (앱 생명주기 동안 1회 실행)
 
-@st.cache_resource(show_spinner="📚 KoFIU 지식베이스 로딩 중...")
+@st.cache_resource(show_spinner="KoFIU 지식베이스 로딩 중...")
 def load_knowledge_base() -> KnowledgeBase:
     kb = KnowledgeBase(
         pdf_directory="knowledge_base",
@@ -20,7 +20,7 @@ def load_knowledge_base() -> KnowledgeBase:
     return kb
 
 
-@st.cache_resource(show_spinner="🔗 Neo4j GraphRAG 준비 중...")
+@st.cache_resource(show_spinner="Neo4j GraphRAG 준비 중...")
 def load_graph_retriever() -> GraphRAGRetriever:
     # lazy=True: 앱 기동 시 AuraDB TLS 연결(최대 30초)을 건너뛰고
     # 첫 SAR 생성(format_context 호출) 시점에 연결한다.
