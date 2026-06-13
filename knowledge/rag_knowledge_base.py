@@ -128,7 +128,7 @@ class KnowledgeBase: # Langchain 기반 RAG 지식베이스 클래스
                     # 임베딩 모델 교체로 차원 불일치 발생 시 컬렉션을 초기화하고 재생성
                     if "dimension" in str(e).lower() or "InvalidDimensionException" in str(type(e)):
                         print(
-                            "[KnowledgeBase] ⚠️ 임베딩 차원 불일치 감지 — "
+                            "[KnowledgeBase] [WARN] 임베딩 차원 불일치 감지 — "
                             "기존 컬렉션을 삭제하고 재빌드합니다."
                         )
                         try:
@@ -216,7 +216,7 @@ class KnowledgeBase: # Langchain 기반 RAG 지식베이스 클래스
                 text   = self.extract_text_from_txt(txt_files[stem])
                 source = txt_files[stem].name
                 if text:
-                    print(f"  📄  TXT 처리: {source}")
+                    print(f"  [TXT] 처리: {source}")
 
             # 2) PDF 폴백
             if not text and stem in pdf_files:
@@ -224,11 +224,11 @@ class KnowledgeBase: # Langchain 기반 RAG 지식베이스 클래스
                 source = pdf_files[stem].name
                 if pdf_text:
                     text = pdf_text
-                    print(f"  📑  PDF 추출: {source} [{status}]")
+                    print(f"  [PDF] 추출: {source} [{status}]")
                 else:
                     print(
-                        f"  ⚠️  PDF 텍스트 추출 불가: {source} [{status}]\n"
-                        f"     → tools/extract_pdf_to_txt.py 실행 후 '{stem}.txt' 생성"
+                        f"  [WARN] PDF 텍스트 추출 불가: {source} [{status}]\n"
+                        f"     -> tools/extract_pdf_to_txt.py 실행 후 '{stem}.txt' 생성"
                     )
 
             if not text:
@@ -248,7 +248,7 @@ class KnowledgeBase: # Langchain 기반 RAG 지식베이스 클래스
             vectorstore.add_documents(documents=lc_docs, ids=ids)
             total_chunks += len(lc_docs)
             ok_count     += 1
-            print(f"  ✅  저장 완료: {source}  ({len(lc_docs)} 청크)")
+            print(f"  [OK] 저장 완료: {source}  ({len(lc_docs)} 청크)")
 
         print(
             f"[KnowledgeBase] 완료 — 처리 {ok_count}개 / "

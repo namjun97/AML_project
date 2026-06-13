@@ -319,7 +319,7 @@ def load_graph_to_neo4j(
 
     # ── Neo4j 연결 ───────────────────────────────────────────────────
     driver = get_driver()
-    print("[Loader] Neo4j 연결 성공 ✅")
+    print("[Loader] Neo4j 연결 성공")
 
     with driver.session() as session:
         node_count = session.run(
@@ -368,10 +368,10 @@ def load_graph_to_neo4j(
 
     print("\n" + "=" * 60)
     print(f"  Neo4j 적재 완료 ({elapsed:.1f}초)")
-    print(f"  ✅ 계좌 노드   : {n:,}개")
-    print(f"  ✅ 거래 관계   : {r:,}개")
-    print(f"  🚨 사기 계좌   : {fraud_n:,}개")
-    print(f"  ⚠️  고위험(>70%): {high_risk:,}개")
+    print(f"  [OK] 계좌 노드   : {n:,}개")
+    print(f"  [OK] 거래 관계   : {r:,}개")
+    print(f"  [!]  사기 계좌   : {fraud_n:,}개")
+    print(f"  [!]  고위험(>70%): {high_risk:,}개")
     print("=" * 60)
 
 

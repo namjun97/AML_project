@@ -214,7 +214,7 @@ def _humanize_feature_value(z_score: float, feature_name: str) -> dict:
     desc = ctx_high if z >= 0 else ctx_low
 
     if abs(z) >= 2.0:
-        desc = "⚠ " + desc + " (극단적 이상치)"
+        desc = "[주의] " + desc + " (극단적 이상치)"
     elif abs(z) >= 1.0:
         desc = desc + " (주목할 수준)"
 
@@ -323,11 +323,11 @@ def generate_ai_report(
         return raw
 
     except EnvironmentError as exc:
-        return f"❌ API 키 오류: {exc}"
+        return f"[오류] API 키 오류: {exc}"
     except Exception as exc:
         # groq.APIConnectionError, groq.RateLimitError 등
         err_type = type(exc).__name__
-        return f"❌ Groq API 오류 ({err_type}): {exc}"
+        return f"[오류] Groq API 오류 ({err_type}): {exc}"
 
 
 # ======================================================================

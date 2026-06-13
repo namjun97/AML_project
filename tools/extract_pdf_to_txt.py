@@ -223,23 +223,23 @@ def convert_pdf_to_txt(pdf_path: Path, overwrite: bool = False) -> bool:
 
     if txt_path.exists() and not overwrite:
         size_kb = txt_path.stat().st_size // 1024
-        print(f"  ⏭️  건너뜀 (이미 존재, {size_kb}KB): {txt_path.name}")
+        print(f"  [SKIP] 건너뜀 (이미 존재, {size_kb}KB): {txt_path.name}")
         return True
 
-    print(f"\n📄 변환 중: {pdf_path.name}")
+    print(f"\n[변환 중] {pdf_path.name}")
 
     # ── 방법 1: Word COM ───────────────────────────────────────────────
     print("  [1/4] Word COM 자동화 시도...")
     if extract_via_word_com(pdf_path, txt_path):
         size_kb = txt_path.stat().st_size // 1024
-        print(f"  ✅ Word COM 성공 ({size_kb}KB) → {txt_path.name}")
+        print(f"  [OK] Word COM 성공 ({size_kb}KB) → {txt_path.name}")
         return True
 
     # ── 방법 2: PowerShell + Word ─────────────────────────────────────
     print("  [2/4] PowerShell + Word 자동화 시도...")
     if extract_via_powershell_word(pdf_path, txt_path):
         size_kb = txt_path.stat().st_size // 1024
-        print(f"  ✅ PowerShell+Word 성공 ({size_kb}KB) → {txt_path.name}")
+        print(f"  [OK] PowerShell+Word 성공 ({size_kb}KB) → {txt_path.name}")
         return True
 
     # ── 방법 3: PyPDF2 ────────────────────────────────────────────────
@@ -247,7 +247,7 @@ def convert_pdf_to_txt(pdf_path: Path, overwrite: bool = False) -> bool:
     text = extract_via_pypdf2(pdf_path)
     if text and len(text) > 200:
         txt_path.write_text(text, encoding="utf-8")
-        print(f"  ✅ PyPDF2 성공 ({len(text):,}자) → {txt_path.name}")
+        print(f"  [OK] PyPDF2 성공 ({len(text):,}자) → {txt_path.name}")
         return True
     print(f"    결과: {len(text)}자 (부족)")
 
@@ -256,13 +256,13 @@ def convert_pdf_to_txt(pdf_path: Path, overwrite: bool = False) -> bool:
     text = extract_via_stream_parser(pdf_path)
     if text and len(text) > 200:
         txt_path.write_text(text, encoding="utf-8")
-        print(f"  ✅ 스트림 파서 성공 ({len(text):,}자) → {txt_path.name}")
+        print(f"  [OK] 스트림 파서 성공 ({len(text):,}자) → {txt_path.name}")
         return True
     print(f"    결과: {len(text)}자 (부족)")
 
     # ── 모두 실패: 수동 안내 ──────────────────────────────────────────
     print(f"""
-  ❌ 자동 변환 실패: {pdf_path.name}
+  [FAIL] 자동 변환 실패: {pdf_path.name}
      이 PDF는 텍스트가 벡터 아웃라인으로 처리된 고급 디자인 PDF입니다.
      아래 방법 중 하나로 수동 변환 후 '{txt_path}' 에 저장하세요.
 
@@ -327,11 +327,11 @@ def main() -> None:
     print(f"\n{'='*50}")
     print(f"완료: {ok}/{len(pdf_files)}개 변환 성공")
     if ok == len(pdf_files):
-        print("\n✅ 모든 파일 준비 완료!")
+        print("\n[OK] 모든 파일 준비 완료!")
         print("   앱을 재시작하면 ChromaDB에 자동 로드됩니다.")
         print("   (기존 chroma_db/ 폴더를 삭제 후 재시작하면 재빌드됩니다)")
     else:
-        print("\n⚠️  일부 파일은 수동 변환이 필요합니다.")
+        print("\n[WARN] 일부 파일은 수동 변환이 필요합니다.")
         print("   변환 후 'python tools/extract_pdf_to_txt.py' 를 다시 실행하세요.")
 
 

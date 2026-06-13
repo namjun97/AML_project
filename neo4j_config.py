@@ -72,7 +72,7 @@ def test_connection() -> bool:
     try:
         driver = get_driver()
         with driver.session() as session:
-            result = session.run("RETURN 'AML GraphRAG 연결 성공 ✅' AS msg")
+            result = session.run("RETURN 'AML GraphRAG 연결 성공' AS msg")
             msg = result.single()["msg"]
             print(f"[Neo4j] {msg}")
 
@@ -86,7 +86,7 @@ def test_connection() -> bool:
 
     except Exception as e:
         err = str(e)
-        print(f"[Neo4j] ❌ 연결 실패: {err}")
+        print(f"[Neo4j] 연결 실패: {err}")
         print()
         _print_diagnosis(err)
         return False

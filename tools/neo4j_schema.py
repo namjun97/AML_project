@@ -55,13 +55,13 @@ def init_schema(force: bool = False) -> None: # Neo4j 스키마 초기화
             label = q[:60].replace("\n", " ")
             try:
                 session.run(q)
-                print(f"  ✅ [{i+1}/{len(SCHEMA_QUERIES)}] {label}...")
+                print(f"  [OK] [{i+1}/{len(SCHEMA_QUERIES)}] {label}...")
             except Exception as e:
                 # 제약/인덱스 이미 존재 시 무시
                 if "already exists" in str(e).lower():
-                    print(f"  ⏭️  [{i+1}] 이미 존재 (건너뜀): {label[:40]}")
+                    print(f"  [SKIP] [{i+1}] 이미 존재 (건너뜀): {label[:40]}")
                 else:
-                    print(f"  ❌ [{i+1}] 실패: {e}")
+                    print(f"  [FAIL] [{i+1}] 실패: {e}")
 
     driver.close()
     print("[Schema] 스키마 초기화 완료.")
