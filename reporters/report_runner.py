@@ -11,6 +11,17 @@ from reporters.context_builder import ContextBuilder
 from reporters.sar_template import assemble_sar_template
 
 
+# LLM 본문(II·III·IV)의 기술 용어 → 수사관 친화 평이 표현 치환 (긴 표현 우선).
+# 모델 점수의 근거가 '거래 행태·자금 흐름 구조 유사성'임을 보고서 전반에서 일관 유지.
+_SAR_TERM_REPLACEMENTS = [
+    ("거래 그래프 임베딩 유사성", "거래 행태·자금 흐름 구조의 유사성"),
+    ("그래프 임베딩 유사성",     "거래 행태·자금 흐름 구조의 유사성"),
+    ("임베딩 유사성",            "거래 행태·자금 흐름 구조의 유사성"),
+    ("거래 그래프 임베딩",       "거래 행태·자금 흐름 구조"),
+    ("GNN 임베딩",              "거래 행태·자금 흐름 구조"),
+]
+
+
 class ReportRunner:
     """
     SAR 보고서 생성 파이프라인 오케스트레이터.
@@ -115,6 +126,11 @@ class ReportRunner:
         clean = _strip_rag_from_output(raw_text)
         clean = clean.replace("があります", "가 있습니다")
         clean = clean.replace("必要があります", "필요가 있습니다")
+        # '임베딩 유사성' 등 기술 용어를 수사관 친화 평이 표현으로 결정적 치환.
+        # (8B LLM 이 프롬프트의 용어 금지 지시를 완전히 따르지 않을 때 대비.
+        #  V장 GraphRAG 해석 블록은 graph_context 로 별도 삽입돼 영향받지 않음.)
+        for _jargon, _plain in _SAR_TERM_REPLACEMENTS:
+            clean = clean.replace(_jargon, _plain)
         return assemble_sar_template(clean, sar_payload, graph_context=graph_context)
 
     # ------------------------------------------------------------------

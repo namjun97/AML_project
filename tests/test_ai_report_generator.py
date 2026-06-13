@@ -133,3 +133,41 @@ class TestCompletionWithRetry:
         with patch("reporters.ai_report_generator.time.sleep") as sleep:
             _completion_with_retry(client, model="m", messages=[])
         sleep.assert_called_once_with(3.0)
+
+
+# ---------------------------------------------------------------------------
+# ReportRunner.finalize — 기술 용어(임베딩) 평이화 치환
+# ---------------------------------------------------------------------------
+
+class TestSarTermReplacement:
+    """SAR 본문의 '임베딩' 계열 기술 용어가 수사관 친화 표현으로 치환되는지 검증."""
+
+    def _runner(self):
+        from reporters.report_runner import ReportRunner
+        return ReportRunner(MagicMock())
+
+    def _payload(self):
+        return {"report_context": {
+            "target_node_id": 1, "risk_level": "고위험(High)",
+            "fraud_probability": "99.78%", "analysis_date": "2026-06-14",
+        }}
+
+    def test_embedding_similarity_replaced(self):
+        rr = self._runner()
+        draft = "##II##\n거래 그래프 임베딩 유사성에 기반한 점수\n##II_END##"
+        out = rr.finalize(draft, self._payload(), graph_context="x")
+        assert "임베딩 유사성" not in out
+        assert "거래 행태·자금 흐름 구조의 유사성" in out
+
+    def test_gnn_embedding_replaced(self):
+        rr = self._runner()
+        draft = "##III##\nGNN 임베딩 분석 결과\n##III_END##"
+        out = rr.finalize(draft, self._payload(), graph_context="x")
+        assert "GNN 임베딩" not in out
+
+    def test_graph_context_interpretation_preserved(self):
+        """V장 GraphRAG 해석 블록(graph_context)은 '임베딩' 정의를 보존한다."""
+        rr = self._runner()
+        gctx = "수치 지문(임베딩)으로 요약한 결과"
+        out = rr.finalize("##II##\n내용\n##II_END##", self._payload(), graph_context=gctx)
+        assert "수치 지문(임베딩)" in out  # 정의 목적의 임베딩 표기는 유지
