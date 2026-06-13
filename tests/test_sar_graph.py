@@ -124,6 +124,7 @@ class TestRetrieveRagNode:
     def test_rag_context_formatted_from_scores(self):
         """rag_context 는 format_scored_context(rag_scores) 결과로 채워진다.
 
+        retrieve 는 원본 점수 결과만 넘기고, 포맷은 integrate 가 1회 수행한다.
         동일 쿼리로 ChromaDB 를 두 번 검색하지 않는다 (중복 검색 방지).
         """
         scores = [{"text": "법령 본문", "source": "law.pdf", "score": 0.8}]
@@ -131,6 +132,7 @@ class TestRetrieveRagNode:
         graph  = _build(cb, rr)
         result = graph.invoke(_base_input())
         assert result["rag_context"] == "법률 A 내용"
+        # integrate 가 정렬 후 1회만 포맷 (단일 element → 정렬 결과 동일)
         cb.format_scored_context.assert_called_once_with(scores)
         cb.build_rag_context.assert_not_called()
 
@@ -210,40 +212,90 @@ class TestFormatScoredContext:
 
 
 # ---------------------------------------------------------------------------
+# 2c. ContextBuilder 쿼리 헬퍼 (단일 소스 — classify/build_rag_context/
+#     search_rag_scored 가 공유, 실제 구현 검증)
+# ---------------------------------------------------------------------------
+
+class TestContextBuilderQueryHelpers:
+    def test_is_network_query_true_with_gnn_feature(self):
+        from reporters.context_builder import ContextBuilder
+        payload = {"key_risk_factors": [{"특징명": "GNN_Emb_3"}]}
+        assert ContextBuilder.is_network_query(payload) is True
+
+    def test_is_network_query_false_without_gnn(self):
+        from reporters.context_builder import ContextBuilder
+        payload = {"key_risk_factors": [{"특징명": "amount"}]}
+        assert ContextBuilder.is_network_query(payload) is False
+
+    def test_is_network_query_false_when_empty(self):
+        from reporters.context_builder import ContextBuilder
+        assert ContextBuilder.is_network_query({}) is False
+
+    def test_build_query_network_variant(self):
+        """네트워크 질의는 '분산 송금 네트워크' 쿼리를 만든다."""
+        from reporters.context_builder import ContextBuilder
+        payload = {
+            "report_context": {"risk_level": "고위험"},
+            "key_risk_factors": [{"특징명": "GNN_Emb_0"}],
+        }
+        q = ContextBuilder.build_query(payload)
+        assert "분산 송금 네트워크" in q and "고위험" in q
+
+    def test_build_query_standard_variant(self):
+        """비네트워크 질의는 일반 의심거래 쿼리를 만든다."""
+        from reporters.context_builder import ContextBuilder
+        payload = {
+            "report_context": {"risk_level": "중위험"},
+            "key_risk_factors": [{"특징명": "amount"}],
+        }
+        q = ContextBuilder.build_query(payload)
+        assert "분산 송금 네트워크" not in q and "중위험" in q
+
+    def test_classify_and_query_consistent(self):
+        """classify 의 분기 기준과 build_query 의 분기 기준이 동일 헬퍼를 쓴다."""
+        from reporters.context_builder import ContextBuilder
+        payload = {"key_risk_factors": [{"특징명": "GNN_Emb_1"}]}
+        # is_network_query 가 True 면 build_query 도 네트워크 변형이어야 한다
+        assert ContextBuilder.is_network_query(payload)
+        assert "네트워크" in ContextBuilder.build_query(payload)
+
+
+# ---------------------------------------------------------------------------
 # 3. integrate_context node
 # ---------------------------------------------------------------------------
 
 class TestIntegrateContextNode:
-    def test_integrated_context_contains_both_sources(self):
-        """integrated_context 에 RAG 와 Graph RAG 내용이 모두 포함된다."""
-        cb, rr = _make_mocks(
-            rag_context="RAG 법령 내용",
-            graph_context="Graph 네트워크 데이터",
-        )
+    def test_rag_context_from_format_scored_context(self):
+        """integrate 가 format_scored_context 결과를 rag_context 로 설정한다."""
+        cb, rr = _make_mocks(rag_context="조립된 법령 컨텍스트")
         graph  = _build(cb, rr)
         result = graph.invoke(_base_input())
-        ic = result["integrated_context"]
-        assert "RAG" in ic
-        assert "Graph" in ic
+        assert result["rag_context"] == "조립된 법령 컨텍스트"
 
-    def test_scores_sorted_descending_in_integrated_context(self):
-        """유사도 낮은 항목이 높은 항목보다 integrated_context 에서 뒤에 온다."""
+    def test_scores_sorted_descending_before_format(self):
+        """format_scored_context 에 유사도 내림차순 정렬된 리스트가 전달된다.
+
+        _build_messages 가 RAG 컨텍스트를 800자로 truncate 하므로, 고유사도
+        법령 구절이 먼저 와야 잘림에서 살아남아 실제로 LLM 에 전달된다.
+        """
         scores = [
-            {"text": "낮은 점수 법령",   "source": "low.pdf",  "score": 0.50},
-            {"text": "높은 점수 법령",   "source": "high.pdf", "score": 0.90},
+            {"text": "낮은 점수 법령", "source": "low.pdf",  "score": 0.50},
+            {"text": "높은 점수 법령", "source": "high.pdf", "score": 0.90},
         ]
         cb, rr = _make_mocks(rag_scores=scores)
         graph  = _build(cb, rr)
-        result = graph.invoke(_base_input())
-        ic = result["integrated_context"]
-        assert ic.index("높은 점수 법령") < ic.index("낮은 점수 법령")
+        graph.invoke(_base_input())
+        passed = cb.format_scored_context.call_args[0][0]
+        assert [r["score"] for r in passed] == [0.90, 0.50]
 
-    def test_empty_graph_context_omitted(self):
-        """graph_context 가 없으면 integrated_context 에서 [Graph RAG] 섹션이 없다."""
-        cb, rr = _make_mocks(graph_context="")
+    def test_empty_scores_graceful(self):
+        """rag_scores 가 비어도 integrate 가 예외 없이 완료된다."""
+        cb, rr = _make_mocks(rag_scores=[])
         graph  = _build(cb, rr)
         result = graph.invoke(_base_input())
-        assert "Graph RAG" not in result["integrated_context"]
+        assert isinstance(result["rag_context"], str)
+        # 빈 리스트가 그대로 정렬·포맷에 전달됐는지 확인
+        assert cb.format_scored_context.call_args[0][0] == []
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +412,6 @@ class TestFullPipeline:
         assert isinstance(result["rag_scores"], list)
         assert isinstance(result["rag_context"], str)
         assert isinstance(result["graph_context"], str)
-        assert isinstance(result["integrated_context"], str)
         assert isinstance(result["sar_draft"], str)
         assert isinstance(result["final_report"], str)
         assert isinstance(result["is_valid"], bool)

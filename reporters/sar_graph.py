@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING, TypedDict
 
 from langgraph.graph import StateGraph, END
 
+from reporters.context_builder import ContextBuilder
+
 if TYPE_CHECKING:
-    from reporters.context_builder import ContextBuilder
     from reporters.report_runner import ReportRunner
 
 
@@ -46,9 +47,8 @@ class AMLState(TypedDict):
     node_idx:            int         # 분석 대상 노드 인덱스
     query_type:          str         # "network" | "standard"
     rag_scores:          list        # RAG 검색 원본 결과 [{text, source, score}, ...]
-    rag_context:         str         # Vector RAG 포맷 텍스트 (LLM용)
+    rag_context:         str         # integrate 가 점수 내림차순 정렬 후 포맷 (LLM 프롬프트용)
     graph_context:       str         # Graph RAG 포맷 텍스트
-    integrated_context:  str         # 점수 기반 앙상블 컨텍스트 (UI 표시용)
     sar_draft:           str         # LLM 생성 SAR 초안
     final_report:        str         # 검증·조립 완성 보고서
     is_valid:            bool        # 법령 근거 포함 여부
@@ -87,25 +87,20 @@ def build_sar_graph(
     # Node 1: 질의 분류
     # ------------------------------------------------------------------
     def classify_query(state: AMLState) -> dict:
-        top_factors = state["sar_payload"].get("key_risk_factors", [])
-        has_network = any("GNN" in f.get("특징명", "") for f in top_factors)
+        has_network = ContextBuilder.is_network_query(state["sar_payload"])
         return {"query_type": "network" if has_network else "standard"}
 
     # ------------------------------------------------------------------
     # Node 2a: Hybrid 검색 — "network" 경로 (Vector RAG + Graph RAG)
     #   GNN 임베딩이 위험 신호인 경우 거래 네트워크 구조가 핵심 근거이므로
     #   Neo4j Graph RAG 를 함께 조회한다.
-    #   - rag_scores: 점수 포함 원본 결과 → integrate, UI 메트릭에 활용
-    #   - rag_context: rag_scores 를 포맷 (동일 쿼리 중복 검색 방지)
+    #   포맷은 하지 않고 원본 점수 결과(rag_scores)만 넘긴다 — 컨텍스트
+    #   조립은 integrate 노드가 단독으로 담당한다 (단일 책임).
     # ------------------------------------------------------------------
     def retrieve_hybrid(state: AMLState) -> dict:
-        rag_scores = context_builder.search_rag_scored(state["sar_payload"])
-        rag_ctx    = context_builder.format_scored_context(rag_scores)
-        graph_ctx  = context_builder.build_graph_context(state["node_idx"])
         return {
-            "rag_scores":   rag_scores,
-            "rag_context":  rag_ctx,
-            "graph_context": graph_ctx,
+            "rag_scores":    context_builder.search_rag_scored(state["sar_payload"]),
+            "graph_context": context_builder.build_graph_context(state["node_idx"]),
         }
 
     # ------------------------------------------------------------------
@@ -114,39 +109,26 @@ def build_sar_graph(
     #   (AuraDB TLS 초기 연결이 최대 30초 — 불필요한 지연 제거)
     # ------------------------------------------------------------------
     def retrieve_vector(state: AMLState) -> dict:
-        rag_scores = context_builder.search_rag_scored(state["sar_payload"])
-        rag_ctx    = context_builder.format_scored_context(rag_scores)
         return {
-            "rag_scores":   rag_scores,
-            "rag_context":  rag_ctx,
+            "rag_scores":    context_builder.search_rag_scored(state["sar_payload"]),
             "graph_context": "",
         }
 
     # ------------------------------------------------------------------
-    # Node 3: 컨텍스트 통합 (점수 가중 앙상블)
-    #   - rag_scores 를 점수 내림차순 정렬 → 관련도 높은 법령 근거 우선 배치
-    #   - graph_context 는 정밀 구조 데이터이므로 뒤에 항상 포함
+    # Node 3: 컨텍스트 조립 (점수 가중 앙상블 — 단일 책임)
+    #   rag_scores 를 유사도 내림차순 정렬한 뒤 format_scored_context 로
+    #   LLM 프롬프트용 rag_context 를 생성한다. 이 정렬이 실질적 의미를
+    #   갖는 이유: ai_report_generator._build_messages 가 RAG 컨텍스트를
+    #   상위 800자로 truncate 하므로, 고유사도 법령 구절이 먼저 와야
+    #   잘림에서 살아남아 실제로 LLM 에 전달된다.
+    #   (retrieve → 원본 점수 결과 / integrate → 정렬·포맷 / generate → 소비)
     # ------------------------------------------------------------------
     def integrate_context(state: AMLState) -> dict:
-        parts: list[str] = []
-
-        rag_scores = state.get("rag_scores") or []
-        if rag_scores:
-            sorted_chunks = sorted(rag_scores, key=lambda r: r.get("score", 0), reverse=True)
-            rag_lines: list[str] = []
-            for i, chunk in enumerate(sorted_chunks, 1):
-                score_label = f"{chunk.get('score', 0):.2f}"
-                src_label   = chunk.get("source", "")
-                text        = chunk.get("text", "").strip()
-                rag_lines.append(f"[법령 {i}] (유사도 {score_label}) 출처: {src_label}\n{text}")
-            parts.append("[법령 RAG — 유사도 가중 정렬]\n" + "\n\n".join(rag_lines))
-        elif state.get("rag_context"):
-            parts.append(f"[법령 RAG]\n{state['rag_context']}")
-
-        if state.get("graph_context"):
-            parts.append(f"[Graph RAG — 거래 네트워크]\n{state['graph_context']}")
-
-        return {"integrated_context": "\n\n".join(parts)}
+        rag_scores   = state.get("rag_scores") or []
+        sorted_scores = sorted(
+            rag_scores, key=lambda r: r.get("score", 0), reverse=True
+        )
+        return {"rag_context": context_builder.format_scored_context(sorted_scores)}
 
     # ------------------------------------------------------------------
     # Node 4: SAR 초안 생성 (Groq LLM)

@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from datetime import datetime
 from typing import Any, Generator
 
@@ -122,6 +123,56 @@ def _build_messages(
         {"role": "system", "content": system_content},
         {"role": "user",   "content": user_content},
     ]
+
+
+# ======================================================================
+# 내부 유틸: Groq 호출 재시도 (무료 티어 TPM 초과 대응)
+# ======================================================================
+
+_MAX_RETRIES = 2     # 최초 1회 + 재시도 2회
+_RETRY_CAP   = 30.0  # 단일 대기 상한 (초) — 데모 무한 대기 방지
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """예외가 Groq TPM/RPM 초과(429)인지 판별한다.
+
+    groq.RateLimitError 를 직접 import 하지 않고 클래스명과 status_code 로
+    판별한다 (SDK 버전 간 예외 경로 차이에 견고하도록).
+    """
+    if exc.__class__.__name__ == "RateLimitError":
+        return True
+    return getattr(exc, "status_code", None) == 429
+
+
+def _retry_after_seconds(exc: Exception, default: float) -> float:
+    """429 응답의 Retry-After 헤더를 우선 사용하고, 없으면 default 를 쓴다."""
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None) or {}
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
+def _completion_with_retry(client, **kwargs):
+    """client.chat.completions.create 를 TPM 초과 시 지수 백오프로 재시도한다.
+
+    무료 티어에서 RAG 컨텍스트가 길면 429(RateLimitError)가 발생한다.
+    Retry-After 헤더(있으면) 또는 5s·10s 백오프로 제한 횟수만 재시도하고,
+    그 외 예외이거나 재시도 소진 시 그대로 전파한다.
+    스트리밍 경로에서도 스트림 생성 시점의 429 를 잡아 안정성을 높인다.
+    """
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            if not _is_rate_limit_error(exc) or attempt == _MAX_RETRIES:
+                raise
+            wait = min(_retry_after_seconds(exc, default=5.0 * (attempt + 1)), _RETRY_CAP)
+            time.sleep(wait)
 
 
 def _strip_rag_from_output(text: str) -> str:
@@ -259,7 +310,8 @@ def stream_ai_report(
     client   = _get_groq_client()
     messages = _build_messages(json_data, rag_context, graph_context)
 
-    stream = client.chat.completions.create(
+    stream = _completion_with_retry(
+        client,
         model=model,
         messages=messages,
         stream=True,
@@ -307,7 +359,8 @@ def generate_ai_report(
         client   = _get_groq_client()
         messages = _build_messages(json_data, rag_context, graph_context)
 
-        response = client.chat.completions.create(
+        response = _completion_with_retry(
+            client,
             model=model,
             messages=messages,
             stream=False,
