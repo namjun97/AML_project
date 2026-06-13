@@ -4,7 +4,7 @@ import torch
 import joblib
 import streamlit as st
 
-from models.embedding_extractor import EmbeddingExtractor
+from models.embedding_extractor import EmbeddingExtractor, predict_fraud_probs
 
 # 1. 모델 및 데이터 로드
 
@@ -27,12 +27,15 @@ def load_resources(
     extractor.load_state_dict(torch.load(gnn_path, map_location="cpu"))
     extractor.eval()
 
-    # 1-3. XGBoost 모델 및 피처명 로드
+    # 1-3. XGBoost 모델 + 피처명 + 스케일러 로드
+    #   scaler: 학습 시 74-dim 하이브리드 피처에 적용한 StandardScaler.
+    #   추론에서 반드시 동일 적용해야 한다 (predict_fraud_probs 참고).
     xgb_data = joblib.load(xgb_path)
     xgb_model = xgb_data["xgb_model"]
     all_feature_names = xgb_data["all_feature_names"]
+    scaler = xgb_data.get("scaler")
 
-    return graph_dict, extractor, xgb_model, all_feature_names
+    return graph_dict, extractor, xgb_model, all_feature_names, scaler
 
 
 # 2. 전체 노드 임베딩 사전 계산
@@ -56,6 +59,7 @@ def get_sorted_test_nodes(
     _graph_dict: dict,
     _xgb_model,
     _all_feature_names: list,
+    _scaler=None,
 ) -> pd.DataFrame:
     test_mask = _graph_dict["test_mask"]
     test_idx = np.where(test_mask.numpy())[0]
@@ -63,14 +67,11 @@ def get_sorted_test_nodes(
     # 임베딩 (미리 계산된 값에서 인덱싱)
     test_embeddings = _all_embs[test_idx]
 
-    # 원본 피처 (뒤에서 10개)
+    # 원본 피처 (10개)
     test_orig = _graph_dict["x"][test_idx, -10:].numpy()
 
-    # XGBoost 입력 구성
-    X_test = np.hstack([test_embeddings, test_orig])
-
-    # 사기 확률 예측
-    probs = _xgb_model.predict_proba(X_test)[:, 1]
+    # 사기 확률 예측 — 학습과 동일한 [원본, 임베딩] 순서 + 스케일러 (단일 헬퍼)
+    probs = predict_fraud_probs(test_embeddings, test_orig, _xgb_model, _scaler)
 
     risk_df = pd.DataFrame(
         {

@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,3 +49,58 @@ class EmbeddingExtractor(nn.Module):
     ) -> torch.Tensor:
         emb = self.forward(x, edge_index)
         return self.classifier(emb)
+
+
+# ======================================================================
+# XGBoost 하이브리드 추론 — 단일 소스 (app / resource_loader / neo4j_loader 공유)
+#
+# 학습 파이프라인(aml_model_comparison.ipynb)과 정확히 일치시킨다:
+#   CELL 24: hybrid = np.hstack([origin_features(10), node_embeddings(64)])  # 원본 먼저!
+#   CELL 30: scaler.fit(train) -> scaler.transform(전체)  # 74-dim StandardScaler
+#   CELL 32: xgb_model.fit(scaled, y)
+#
+# [과거 버그] 서빙 3경로가 모두 hstack([emb, orig]) 로 순서를 뒤집고 스케일러를
+# 생략 -> XGBoost 입력이 학습과 어긋나 fraud_prob 의 AUC 가 0.34(무작위 이하)로
+# 무의미했음. 아래 헬퍼로 통일해 동일 버그 재발을 차단한다. (회귀 테스트로 AUC>0.9 검증)
+# ======================================================================
+
+def build_hybrid_features(orig_feats: np.ndarray, embs: np.ndarray) -> np.ndarray:
+    """학습과 동일한 [원본 집계 10, GNN 임베딩 64] 순서로 결합한다."""
+    orig_feats = np.asarray(orig_feats, dtype=np.float32)
+    embs       = np.asarray(embs,       dtype=np.float32)
+    return np.hstack([orig_feats, embs]).astype(np.float32)
+
+
+def predict_fraud_probs(
+    embs: np.ndarray,
+    orig_feats: np.ndarray,
+    xgb_model,
+    scaler,
+) -> np.ndarray:
+    """GNN 임베딩 + 원본 피처 -> 사기 확률(class 1). 학습 전처리와 동일.
+
+    Args:
+        embs:       (N, 64) GNN 임베딩
+        orig_feats: (N, 10) 원본 집계 피처 (graph_dict["x"], 이미 1차 스케일됨)
+        xgb_model:  학습된 XGBClassifier
+        scaler:     fraud_model.pkl 의 74-dim StandardScaler (없으면 생략)
+
+    Returns:
+        (N,) 사기 확률 배열
+    """
+    X = build_hybrid_features(orig_feats, embs)
+    if scaler is not None:
+        X = scaler.transform(X).astype(np.float32)
+    return xgb_model.predict_proba(X)[:, 1]
+
+
+def hybrid_feature_names(all_feature_names: list) -> list:
+    """저장된 all_feature_names 를 실제 학습 피처 순서([원본10, 임베딩64])로 재정렬.
+
+    fraud_model.pkl 의 all_feature_names 는 [GNN_Emb*64, 원본*10] 으로 저장돼 있어
+    실제 학습 행렬([원본, 임베딩])과 어긋난다. SHAP/워터폴/SAR 의 피처 라벨이
+    컬럼과 일치하도록 [원본, 임베딩] 순서로 되돌린다.
+    """
+    emb  = [n for n in all_feature_names if str(n).startswith("GNN_Emb")]
+    orig = [n for n in all_feature_names if not str(n).startswith("GNN_Emb")]
+    return orig + emb

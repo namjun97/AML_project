@@ -12,6 +12,7 @@ import streamlit.components.v1 as components
 
 from analysis.network_visualizer import build_fund_flow_network, get_network_stats
 from analysis.shap_analyzer import ShapAnalyzer
+from models.embedding_extractor import build_hybrid_features, hybrid_feature_names
 from loaders.resource_loader import (
     get_all_embeddings_cached,
     get_sorted_test_nodes,
@@ -36,12 +37,15 @@ st.title("🛡️ 자금 세탁 거점 분석 대시보드")
 
 # 1. 모델·그래프 데이터 로드 (캐싱)
 
-graph_dict, extractor, xgb_model, all_feature_names = load_resources()
+graph_dict, extractor, xgb_model, all_feature_names, scaler = load_resources()
+# 저장된 all_feature_names([emb,orig])를 실제 학습 순서([orig,emb])로 재정렬.
+# 이후 모든 피처 라벨(SHAP/워터폴/SAR)은 feature_names 를 사용해 컬럼과 정렬을 맞춘다.
+feature_names = hybrid_feature_names(all_feature_names)
 all_embs_cached = get_all_embeddings_cached(
     extractor, graph_dict["x"], graph_dict["edge_index"]
 )
 risk_df = get_sorted_test_nodes(
-    all_embs_cached, graph_dict, xgb_model, all_feature_names
+    all_embs_cached, graph_dict, xgb_model, all_feature_names, scaler
 )
 high_risk_indices = risk_df["node_idx"].tolist()
 
@@ -139,9 +143,13 @@ if not st.session_state.analysis_done:
 
 with st.spinner("분석 중......"):
     # 5-1. 임베딩 인덱싱 + XGBoost 예측
+    #   학습과 동일하게 [원본10, 임베딩64] 결합 후 74-dim 스케일러 적용.
+    #   (X_input 은 모델이 실제로 보는 입력 = SHAP 설명 대상)
     node_emb  = all_embs_cached[selected_idx].reshape(1, -1)
     node_orig = graph_dict["x"][selected_idx][-10:].reshape(1, -1).numpy()
-    X_input   = np.hstack([node_emb, node_orig])
+    X_input   = build_hybrid_features(node_orig, node_emb)
+    if scaler is not None:
+        X_input = scaler.transform(X_input).astype(np.float32)
     prob      = xgb_model.predict_proba(X_input)[0][1]
 
     # 5-2. SHAP 분석
@@ -166,7 +174,7 @@ with st.spinner("분석 중......"):
 
     # 5-4. SHAP 시각화 + 피처 테이블
     st.write("### 📊 판단 근거 분석")
-    top_feature = analyzer.most_influential_feature(shap_values, all_feature_names)
+    top_feature = analyzer.most_influential_feature(shap_values, feature_names)
     st.info(f"#### 💡 분석 핵심 요약: 가장 큰 영향을 준 요인은 **'{top_feature}'** 입니다.")
 
     col1, col2 = st.columns([1.5, 1])
@@ -176,7 +184,7 @@ with st.spinner("분석 중......"):
         shap.plots._waterfall.waterfall_legacy(
             analyzer.expected_value,
             shap_values[0],
-            feature_names=all_feature_names,
+            feature_names=feature_names,
             max_display=10,
             show=False,
         )
@@ -185,7 +193,8 @@ with st.spinner("분석 중......"):
 
     with col2:
         st.write("#### 2. 원본 피처 데이터 정보")
-        orig_feature_names = all_feature_names[-10:]
+        # 재정렬된 feature_names 에서 원본 집계 10개는 앞쪽에 위치 (node_orig 컬럼과 정렬됨)
+        orig_feature_names = feature_names[:10]
         orig_df = pd.DataFrame(node_orig, columns=orig_feature_names)
 
         # z-score 수치 + 수준 레이블을 한 열에 함께 표시
@@ -270,7 +279,7 @@ with st.spinner("분석 중......"):
         prob              = prob,
         shap_values       = shap_values,
         X_input           = X_input,
-        all_feature_names = all_feature_names,
+        all_feature_names = feature_names,
         orig_df_dict      = orig_df_dict,
     )
 

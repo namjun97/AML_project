@@ -1,8 +1,20 @@
 import sys
 from pathlib import Path
 
+# neo4j_config 가 임포트 시점에 환경변수를 읽으므로 가장 먼저 .env 로드.
+# (없으면 NEO4J_URI 가 기본값 bolt://localhost:7687 로 폴백 → AuraDB 미접속)
+from dotenv import load_dotenv
+load_dotenv()
+
 # 프로젝트 루트를 sys.path에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Windows 기본 콘솔(cp949)에서 한국어 진행 메시지 출력 시 UnicodeEncodeError 방지
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 from neo4j_config import get_driver
 

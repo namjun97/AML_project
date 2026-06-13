@@ -28,7 +28,7 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from models.embedding_extractor import EmbeddingExtractor
+from models.embedding_extractor import EmbeddingExtractor, predict_fraud_probs
 from neo4j_config import get_driver
 
 
@@ -183,11 +183,11 @@ def _compute_fraud_probs(  # 전체 노드 사기 확률 계산
     print("[Loader] XGBoost 사기 확률 계산 중...")
     xgb_data  = joblib.load(str(xgb_path))
     xgb_model = xgb_data["xgb_model"]
+    scaler    = xgb_data.get("scaler")
 
-    orig_features = graph_dict["x"].numpy()   # 스케일된 값 사용 (학습 시 동일)
-    X_all = np.hstack([embs, orig_features])
-
-    probs = xgb_model.predict_proba(X_all)[:, 1]
+    # 학습과 동일: [원본10, 임베딩64] 순서 + 74-dim 스케일러 (단일 헬퍼)
+    orig_features = graph_dict["x"].numpy()
+    probs = predict_fraud_probs(embs, orig_features, xgb_model, scaler)
     print(f"[Loader] 사기 확률 계산 완료  (평균: {probs.mean():.4f})")
     return probs
 
