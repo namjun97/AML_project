@@ -233,29 +233,34 @@ def _humanize_feature_value(z_score: float, feature_name: str) -> dict:
         level = "매우 낮음"
 
     if feature_name.startswith("GNN_Emb"):
-        if z >= 1.5:
-            desc = "강한 사기 방향 활성화 (네트워크상 의심 패턴 밀집 영역)"
-        elif z >= 0.5:
-            desc = "중간 사기 방향 활성화 (주변 의심 계좌와 유사한 거래 패턴)"
-        elif z >= -0.5:
-            desc = "중립적 활성화 (정상·사기 경계 영역)"
-        elif z >= -1.5:
-            desc = "중간 정상 방향 활성화 (주변 정상 계좌와 유사한 거래 패턴)"
-        else:
-            desc = "강한 정상 방향 활성화 (네트워크상 정상 패턴 밀집 영역)"
-        return {"수준": level, "z점수": round(z, 4), "설명": desc}
+        # 임베딩 차원은 추상 학습 피처라 단일 차원에 "사기/정상 방향"의 고정 의미를
+        # 부여할 수 없다. 위험 방향은 SHAP 기여도(영향도)로만 판단하며, 여기서는
+        # 중립적으로만 기술한다 (과거: z부호로 방향을 날조해 영향도와 모순됐음).
+        return {
+            "수준": level,
+            "z점수": round(z, 4),
+            "설명": "거래 네트워크 구조 임베딩 (그래프상 위치 특징 — 단일 차원 단독 해석 불가)",
+        }
 
+    # 실제 노드 집계 피처(neo4j_loader._FEATURE_COLS) 기준 의미 매핑.
+    # (high z 의미, low z 의미) — 과거에는 거래 단위 피처명만 있어 실제 피처가
+    # 기본값 "<name> 수치 높음/낮음" 으로 떨어져 해석 불가였음.
     feature_context: dict[str, tuple[str, str]] = {
+        "send_count":       ("송금 건수 비정상적으로 많음",       "송금 건수 적음"),
+        "send_total":       ("총 송금 규모 큼",                  "총 송금 규모 작음"),
+        "send_mean":        ("평균 송금액 큼",                   "평균 송금액 작음"),
+        "send_max":         ("최대 단일 송금액 큼",              "최대 단일 송금액 작음"),
+        "recv_count":       ("수취 건수 비정상적으로 많음",       "수취 건수 적음"),
+        "recv_total":       ("총 수취 규모 큼",                  "총 수취 규모 작음"),
+        "recv_mean":        ("평균 수취액 큼",                   "평균 수취액 작음"),
+        "zero_balance_cnt": ("송금 후 잔액 0 빈번 (계좌 비우기 의심)", "잔액 소진 거래 드묾"),
+        "empty_acct_recv":  ("빈 계좌로의 수취 빈번 (자금 경유 의심)", "정상 잔액 계좌로 수취"),
+        "mismatch_sum":     ("잔액 불일치 누적 큼 (자금 은닉 의심)",   "잔액 정합성 양호"),
+        # (하위 호환) 과거 거래 단위 피처명
         "amount":           ("대규모 거래 금액",              "소규모 거래 금액"),
         "log_amount":       ("대규모 거래 금액 (로그)",        "소규모 거래 금액 (로그)"),
         "balance_mismatch": ("잔액 불일치 심각 (자금 은닉 의심)", "잔액 정상 범위"),
         "hour_of_day_norm": ("비정상 시간대 거래 (심야·새벽)", "일반 업무 시간대 거래"),
-        "step":             ("장기 거래 기록",                "초기 또는 단기 거래 기록"),
-        "oldbalanceOrg":    ("송금 전 잔액 높음",             "송금 전 잔액 낮음"),
-        "newbalanceOrig":   ("송금 후 잔액 높음",             "송금 후 잔액 낮음 (계좌 비우기 의심)"),
-        "oldbalanceDest":   ("수신 전 잔액 높음",             "수신 전 잔액 낮음"),
-        "newbalanceDest":   ("수신 후 잔액 높음",             "수신 후 잔액 낮음"),
-        "isFraud":          ("사기 거래 비율 높음",           "정상 거래 비율 높음"),
     }
 
     ctx_high, ctx_low = feature_context.get(
@@ -430,6 +435,66 @@ def build_sar_payload(
             "영향도":   direction,
         })
 
+    # ── 의심 사유를 SHAP 기여 방향·크기 기준으로 정리 ────────────────────
+    #   핵심 원칙: 피처 "값의 high/low"가 아니라 "위험 기여 방향(SHAP 부호)"으로
+    #   기술해야 영향도와 모순되지 않는다. 행동 피처는 평문 지표명으로, GNN 임베딩은
+    #   기여 크기 합으로 집約한다. (개수 집계는 큰 기여를 놓쳐 방향을 오판함)
+    _BEHAVIORAL_DOMAIN = {
+        "send_count":       "송금 거래 빈도",
+        "send_total":       "총 송금 규모",
+        "send_mean":        "평균 송금액",
+        "send_max":         "최대 단일 송금액",
+        "recv_count":       "수취 거래 빈도",
+        "recv_total":       "총 수취 규모",
+        "recv_mean":        "평균 수취액",
+        "zero_balance_cnt": "송금 후 잔액 소진(계좌 비우기) 빈도",
+        "empty_acct_recv":  "빈 계좌로의 수취(자금 경유) 빈도",
+        "mismatch_sum":     "잔액 불일치(자금 은닉) 누적",
+    }
+
+    n_feat = shap_values.shape[1]
+    behavioral: list[tuple[str, float]] = []
+    gnn_pos_mag = gnn_neg_mag = 0.0
+    for k in range(n_feat):
+        name = all_feature_names[k]
+        sv   = float(shap_values[0][k])
+        if name.startswith("GNN_Emb"):
+            if sv > 0:
+                gnn_pos_mag += sv
+            else:
+                gnn_neg_mag += -sv
+            continue
+        behavioral.append((name, sv))
+
+    behavioral.sort(key=lambda t: abs(t[1]), reverse=True)
+    behavioral_factors = []
+    for name, sv in behavioral[:4]:
+        behavioral_factors.append({
+            "지표":     _BEHAVIORAL_DOMAIN.get(name, name),
+            "기여방향": "위험 증가(사기 의심)" if sv > 0 else "위험 감소(정상 의심)",
+            "기여도":   round(abs(sv), 3),
+        })
+
+    gnn_increases = gnn_pos_mag >= gnn_neg_mag
+    network_signal = {
+        "종합_기여방향": "위험 증가" if gnn_increases else "위험 감소",
+        "요약": (
+            "거래 네트워크 임베딩의 종합 기여가 위험 증가 방향 — 거래 그래프상 "
+            "사기 계좌군과 유사한 위치로 판단됨"
+            if gnn_increases else
+            "거래 네트워크 임베딩의 종합 기여가 위험 감소 방향 — 거래 그래프상 "
+            "정상 계좌군과 더 유사함"
+        ),
+    }
+
+    # 주요 판단 근거: 네트워크(GNN) vs 행동 피처 중 어느 쪽 기여가 큰가
+    beh_mag = sum(abs(sv) for _, sv in behavioral)
+    gnn_mag = gnn_pos_mag + gnn_neg_mag
+    primary_driver = (
+        "거래 네트워크 구조(GNN 임베딩)" if gnn_mag >= beh_mag
+        else "계좌 거래 행동 패턴"
+    )
+
     if prob > 0.7:
         risk_level_str = "고위험(High)"
     elif prob > 0.4:
@@ -444,8 +509,11 @@ def build_sar_payload(
             "fraud_probability": f"{prob:.2%}",
             "risk_level":       risk_level_str,
         },
-        "key_risk_factors": top_features_summary,
-        "raw_feature_data": orig_df_dict,
+        "key_risk_factors":   top_features_summary,
+        "주요_판단_근거":     primary_driver,        # 네트워크 vs 행동 중 지배적 근거
+        "behavioral_factors": behavioral_factors,   # 행동 피처 기여 (지표·방향·크기)
+        "network_signal":     network_signal,       # GNN 임베딩 종합 기여 방향
+        "raw_feature_data":   orig_df_dict,
         "model_explanation": (
             "이 모델은 거래처 간의 송금 네트워크(GNN)와 "
             "해당 계좌의 통계적 특징(XGBoost)을 결합하여 분석한 결과입니다."
