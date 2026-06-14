@@ -67,6 +67,8 @@ jobs:
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
+        with:
+          lfs: true   # LFS 파일(.pdf/.ttf 등)을 포인터가 아닌 실제 내용으로 받기
 
       - name: Python 설정
         uses: actions/setup-python@v5
@@ -99,6 +101,19 @@ jobs:
           HfApi._validate_yaml = _safe_validate
 
           api = HfApi(token=os.environ["HF_TOKEN"])
+          REPO = "Vartyor/aml-project"
+
+          # ── stale 바이너리 강제 갱신 ─────────────────────────────────────
+          # upload_folder 는 '내용이 바뀐 파일만' 재업로드한다. 최초 배포 때 GitHub LFS
+          # 포인터 상태로 올라가 깨진 바이너리(예: model/saml_gnn.pth)가 이후 내용 무변경이면
+          # HF 에 깨진 채 영구히 남아 torch.load 가 'invalid load key' 로 실패한다.
+          # → 업로드 전에 삭제해 강제 재업로드(checkout 의 실제 내용으로)한다.
+          try:
+              api.delete_folder(path_in_repo="model", repo_id=REPO, repo_type="space",
+                                commit_message="refresh: model artifacts 재업로드")
+              print("[refresh] model/ 삭제 완료 — 재업로드 예정")
+          except Exception as exc:
+              print(f"[refresh] model/ 삭제 건너뜀: {type(exc).__name__}: {exc}")
 
           # 업로드 제외 패턴 (로컬 전용 파일)
           ignore_patterns = [
