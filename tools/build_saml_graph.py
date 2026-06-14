@@ -153,10 +153,14 @@ def _build(sub: pd.DataFrame):
     edge_attr = torch.tensor(sub[EDGE_FEATURES].values.astype(np.float32))
     edge_is_launder = torch.tensor(sub.Is_laundering.values.astype(np.int64))
 
+    # .pt 는 앱/학습/임베딩에 필요한 텐서만 저장 (HF Spaces 10MB LFS 임계 회피 → <10MB).
+    #   edge_attr·edge_is_laundering 은 어떤 경로도 .pt 에서 읽지 않고(엣지 정보는
+    #   saml_edges.parquet 사용), y 는 0/1 이라 int8 로 충분. edge_index 는 PyG 호환 위해 int64.
+    _ = edge_attr, edge_is_launder  # (참고용 — .pt 에는 미저장)
     graph = {
-        "x": torch.tensor(x), "edge_index": edge_index, "edge_attr": edge_attr,
-        "edge_is_laundering": edge_is_launder,
-        "y": torch.tensor(y),
+        "x": torch.tensor(x),
+        "edge_index": edge_index,
+        "y": torch.tensor(y, dtype=torch.int8),
         "train_mask": torch.tensor(masks["train"]),
         "val_mask": torch.tensor(masks["val"]),
         "test_mask": torch.tensor(masks["test"]),
