@@ -211,8 +211,11 @@ def build_fund_flow_network(
         str: pyvis HTML 문자열
     """
     edge_index = graph_dict["edge_index"].numpy()
-    edge_attr  = graph_dict["edge_attr"].numpy()
+    edge_attr  = graph_dict["edge_attr"].numpy()   # SAML: [log_amount, cross_border, currency_mismatch]
     y_labels   = graph_dict["y"].numpy()
+    # 세탁 거래 플래그 (없으면 노드 라벨 기반으로 폴백)
+    _eil = graph_dict.get("edge_is_laundering")
+    edge_is_l = _eil.numpy() if _eil is not None else None
     src_arr    = edge_index[0]
     dst_arr    = edge_index[1]
 
@@ -318,39 +321,36 @@ def build_fund_flow_network(
     v_src     = src_arr[edge_mask]
     v_dst     = dst_arr[edge_mask]
     v_attr    = edge_attr[edge_mask]
+    v_laund   = edge_is_l[edge_mask] if edge_is_l is not None else None
 
-    for s, d, attr in zip(v_src, v_dst, v_attr):
-        log_amount    = float(attr[0])
-        type_enc      = int(attr[1])
-        b_diff_orig   = float(attr[2])
-        b_diff_dest   = float(attr[3])
-        mismatch      = float(attr[4])
-        # [수정] hour_of_day_norm: index 5 (step_norm → 순환 패턴으로 교체)
-        hour_norm     = float(attr[5]) if len(attr) > 5 else None
-        orig_amount   = _expm1_amount(log_amount)
+    for i, (s, d, attr) in enumerate(zip(v_src, v_dst, v_attr)):
+        log_amount  = float(attr[0])
+        cross       = len(attr) > 1 and float(attr[1]) >= 0.5     # 국가 간 거래
+        curr_mis    = len(attr) > 2 and float(attr[2]) >= 0.5     # 송·수취 통화 불일치
+        orig_amount = _expm1_amount(log_amount)
 
-        is_fraud_edge = (
-            (int(y_labels[s]) == 1 if s < len(y_labels) else False) or
-            (int(y_labels[d]) == 1 if d < len(y_labels) else False)
-        )
+        # 세탁 거래 플래그: 엣지 단위 라벨 우선, 없으면 노드 라벨 기반 폴백
+        if v_laund is not None:
+            is_fraud_edge = bool(int(v_laund[i]))
+        else:
+            is_fraud_edge = (
+                (int(y_labels[s]) == 1 if s < len(y_labels) else False) or
+                (int(y_labels[d]) == 1 if d < len(y_labels) else False)
+            )
         edge_color = _COLOR_EDGE_FRAUD if is_fraud_edge else _COLOR_EDGE_NORMAL
         edge_width = max(1.5, min(8.0, log_amount * 0.7))
-        type_str   = _TYPE_MAP.get(type_enc, "UNKNOWN")
 
-        # hour_of_day_norm → 실제 시간대 역산 (×23 = 0~23시)
-        hour_info = (
-            f"<br>거래 시간대: {hour_norm * 23:.0f}시 "
-            + ("🌙 야간" if hour_norm * 23 <= 6 else "")
-            if hour_norm is not None else ""
-        )
+        flags = []
+        if is_fraud_edge:
+            flags.append("🔴 자금세탁 확정 거래")
+        if cross:
+            flags.append("국가 간 거래(역외)")
+        if curr_mis:
+            flags.append("송·수취 통화 불일치(환치기)")
+        flag_str = ("<br>" + " · ".join(flags)) if flags else ""
         title = (
-            f"<b>거래 유형: {type_str}</b><br>"
-            f"거래 금액: {_format_amount(log_amount)}<br>"
-            f"  (₩{orig_amount:,.0f})<br>"
-            f"송금자 잔액 변화: ₩{b_diff_orig:+,.0f}<br>"
-            f"수취자 잔액 변화: ₩{b_diff_dest:+,.0f}<br>"
-            f"잔액 불일치: ₩{mismatch:,.0f}"
-            + hour_info
+            f"<b>거래 금액: ₩{orig_amount:,.0f}</b>"
+            f"{flag_str}"
         )
         net.add_edge(
             source = int(s),

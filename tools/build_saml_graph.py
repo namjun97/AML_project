@@ -150,17 +150,16 @@ def _build(sub: pd.DataFrame):
     raw_df.to_csv(ROOT / "model" / "saml_node_features_raw.csv", index=False, encoding="utf-8")
 
     edge_index = torch.tensor([sub.src.values, sub.dst.values], dtype=torch.long)
-    edge_attr = torch.tensor(sub[EDGE_FEATURES].values.astype(np.float32))
-    edge_is_launder = torch.tensor(sub.Is_laundering.values.astype(np.int64))
-
-    # .pt 는 앱/학습/임베딩에 필요한 텐서만 저장 (HF Spaces 10MB LFS 임계 회피 → <10MB).
-    #   edge_attr·edge_is_laundering 은 어떤 경로도 .pt 에서 읽지 않고(엣지 정보는
-    #   saml_edges.parquet 사용), y 는 0/1 이라 int8 로 충분. edge_index 는 PyG 호환 위해 int64.
-    _ = edge_attr, edge_is_launder  # (참고용 — .pt 에는 미저장)
+    # 시각화용 경량 엣지 피처 [log_amount, cross_border, currency_mismatch] + 세탁 플래그.
+    #   (GNN/XGBoost 는 edge_attr 를 쓰지 않음 — 오직 network_visualizer 가 금액·역외·환치기
+    #    표시에 사용. 5컬럼 전체 대신 3컬럼만 저장해 .pt 를 작게 유지.)
+    viz_edge = sub[["log_amount", "cross_border", "currency_mismatch"]].values.astype(np.float32)
     graph = {
         "x": torch.tensor(x),
         "edge_index": edge_index,
-        "y": torch.tensor(y, dtype=torch.int8),
+        "edge_attr": torch.tensor(viz_edge),                       # 시각화용
+        "edge_is_laundering": torch.tensor(sub.Is_laundering.values.astype(np.int8)),
+        "y": torch.tensor(y, dtype=torch.int8),                    # 0/1 → int8
         "train_mask": torch.tensor(masks["train"]),
         "val_mask": torch.tensor(masks["val"]),
         "test_mask": torch.tensor(masks["test"]),
