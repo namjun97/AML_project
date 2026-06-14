@@ -168,6 +168,19 @@ def _extract_section(text: str, start_marker: str, end_marker: str) -> str:
     if match:
         return match.group(1).strip()
 
+    # 3차 시도: end_marker 가 없을 때 — 시작 마커 ~ '다음 ## 마커 또는 문자열 끝'.
+    #   LLM(llama-3.1-8b)이 _END 마커를 종종 생략하고 다음 시작 마커(##III## 등)만
+    #   구분자로 쓴다. 특히 마지막 ##IV## 는 뒤에 마커가 없어 EOS 로 닫아야 한다.
+    #   (이 폴백이 없으면 IV 가 매번 '파싱 실패'로 떨어졌음)
+    open_pat = re.compile(
+        re.escape(start_marker) + r"(.*?)(?=##\s*[IVXivx]{1,3}(?:_END)?\s*##|$)",
+        re.DOTALL | re.IGNORECASE,
+    )
+    for candidate in (normalized, text):
+        m = open_pat.search(candidate)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+
     return ""
 
 

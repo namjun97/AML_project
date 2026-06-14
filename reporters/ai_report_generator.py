@@ -90,11 +90,11 @@ def _build_messages(
     # ── user: 참조 자료 + 분석 데이터 ───────────────────────────────
     # Groq 무료 티어 TPM 제한(6,000) 대비 컨텍스트 길이 제한
     # 한국어 1자 ≈ 1.5~2 토큰 기준으로 보수적으로 잡음
-    _MAX_RAG_CHARS   = 800    # ≈ 400~500 토큰
+    _MAX_RAG_CHARS   = 500    # ≈ 300 토큰 (Groq 무료 TPM 6000 대비 축소)
     # 그래프 컨텍스트는 '종합 수사 평가'(핵심 의심 근거 요약 + 우선순위별 권고 조치)와
     # '계좌 위험 프로파일'(모티프·구체 수치)을 포함하므로, II장 근거·IV장 조치가 모두
     # LLM 에 닿도록 넉넉히 전달한다.
-    _MAX_GRAPH_CHARS = 2000   # ≈ 1000~1300 토큰
+    _MAX_GRAPH_CHARS = 1200   # ≈ 700~800 토큰 (종합 수사 평가의 근거·권고조치가 앞부분이라 보존됨)
 
     user_parts: list[str] = []
 
@@ -327,7 +327,7 @@ def stream_ai_report(
         stream=True,
         temperature=0.1,
         seed=42,
-        max_tokens=2048,
+        max_tokens=1800,
     )
 
     for chunk in stream:
@@ -376,7 +376,7 @@ def generate_ai_report(
             stream=False,
             temperature=0.1,
             seed=42,
-            max_tokens=2048,
+            max_tokens=1800,
         )
 
         raw = response.choices[0].message.content or "보고서 내용 생성 실패"

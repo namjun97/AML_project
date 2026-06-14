@@ -171,3 +171,56 @@ class TestSarTermReplacement:
         gctx = "수치 지문(임베딩)으로 요약한 결과"
         out = rr.finalize("##II##\n내용\n##II_END##", self._payload(), graph_context=gctx)
         assert "수치 지문(임베딩)" in out  # 정의 목적의 임베딩 표기는 유지
+
+
+# ---------------------------------------------------------------------------
+# _extract_section — _END 마커 누락 견고성
+#
+# llama-3.1-8b 는 ##II##/##III##/##IV## 시작 마커만 찍고 _END 마커를 종종
+# 생략한다. 특히 마지막 ##IV## 는 뒤에 마커가 없어, _END 를 필수로 요구하면
+# IV 가 매번 '파싱 실패'로 떨어진다. 시작 마커 ~ 다음 마커/EOS 로 닫혀야 한다.
+# ---------------------------------------------------------------------------
+
+class TestExtractSectionWithoutEndMarker:
+    _RAW = (
+        "##II## \n1. 첫째 징후.\n2. 둘째 징후.\n"
+        "##III## \n위험 평가 본문.\n"
+        "##IV## \n1. 첫 조치.\n5. 특정금융정보법 제4조에 따라 STR 을 즉시 제출한다."
+    )
+
+    def _ex(self, start, end):
+        from reporters.sar_template import _extract_section
+        return _extract_section(self._RAW, start, end)
+
+    def test_ii_closed_by_next_marker(self):
+        out = self._ex("##II##", "##II_END##")
+        assert "첫째 징후" in out and "둘째 징후" in out
+        assert "위험 평가" not in out  # III 로 새지 않음
+
+    def test_iii_closed_by_next_marker(self):
+        out = self._ex("##III##", "##III_END##")
+        assert out.strip() == "위험 평가 본문."
+
+    def test_iv_closed_by_eos(self):
+        """마지막 IV 는 뒤에 마커가 없어도 문자열 끝까지 잡혀 완결돼야 한다."""
+        out = self._ex("##IV##", "##IV_END##")
+        assert out.rstrip().endswith("제출한다.")
+        assert "5. 특정금융정보법" in out
+
+    def test_explicit_end_marker_still_works(self):
+        from reporters.sar_template import _extract_section
+        raw = "##II##\n내용만.\n##II_END##\n뒤쪽 잡소리"
+        out = _extract_section(raw, "##II##", "##II_END##")
+        assert out.strip() == "내용만."
+        assert "잡소리" not in out
+
+    def test_no_parsing_failure_fallback(self):
+        """assemble_sar_template 가 _END 누락 출력에도 폴백 문구를 내지 않는다."""
+        from reporters.sar_template import assemble_sar_template
+        payload = {"report_context": {
+            "target_node_id": 7, "risk_level": "고위험(High)",
+            "fraud_probability": "99.96%", "analysis_date": "2026-06-14",
+        }}
+        out = assemble_sar_template(self._RAW, payload, graph_context="네트워크 분석")
+        assert "파싱 실패" not in out
+        assert "제출한다." in out
