@@ -47,7 +47,20 @@ all_embs_cached = get_all_embeddings_cached(
 risk_df = get_sorted_test_nodes(
     all_embs_cached, graph_dict, xgb_model, all_feature_names, scaler
 )
-high_risk_indices = risk_df["node_idx"].tolist()
+# 워치리스트: 의심도 내림차순 상위 N개만 노출 (2.8만개 전체 나열 방지)
+_WATCHLIST_N = 200
+high_risk_indices = risk_df["node_idx"].tolist()[:_WATCHLIST_N]
+
+
+# ── 위험도 표시 헬퍼 (신뢰도) ─────────────────────────────────────────
+#   · 100% 단정 회피: 모델 점수는 보정 전 '선별 점수'이므로 99.9% 를 상한으로 표기
+#   · 등급 라벨 병기: 숫자만이 아니라 고위험/위험/주의/낮음 으로 맥락 제공
+def _risk_tier(p: float) -> str:
+    return "고위험" if p >= 0.9 else "위험" if p >= 0.7 else "주의" if p >= 0.4 else "낮음"
+
+
+def _fmt_risk_pct(p: float) -> str:
+    return f"{min(float(p), 0.999) * 100:.1f}%"
 
 
 # 2. 지식 리소스 초기화 (텍스트 RAG + GraphRAG)
@@ -106,11 +119,14 @@ if "graph_context_used" not in st.session_state:
 # ======================================================================
 with st.sidebar:
     st.header("⚙️ 분석 설정")
-    st.info("💡 아래 리스트는 모델이 판단한 **사기 의심 확률이 높은 순**으로 정렬되어 있습니다.")
+    st.info(
+        f"💡 모델이 선별한 **의심도 상위 {_WATCHLIST_N}개** 계좌입니다(검토 우선순위 순). "
+        "표시된 의심도는 확정 확률이 아니라 **검토 대상 선별 점수**이며, 상위권은 비슷하게 높습니다."
+    )
 
     def format_node_label(idx: int) -> str:
-        row = risk_df[risk_df["node_idx"] == idx].iloc[0]
-        return f"ID: {idx} (위험도: {row['fraud_prob']:.1%})"
+        p = float(risk_df.loc[risk_df["node_idx"] == idx, "fraud_prob"].iloc[0])
+        return f"계좌 {idx} · {_risk_tier(p)} (의심도 {_fmt_risk_pct(p)})"
 
     selected_idx = st.selectbox(
         "분석할 거래(노드) 선택",
@@ -163,7 +179,7 @@ with st.spinner("분석 중......"):
     # 5-3. 메트릭 카드
     c1, c2, c3 = st.columns(3)
     c1.metric("선택된 노드", selected_idx)
-    c2.metric("자금 세탁 통로 의심 점수", f"{prob:.2%}")
+    c2.metric("자금세탁 의심도(선별 점수)", _fmt_risk_pct(prob))
     if prob > 0.5:
         c3.error("🚨 고위험 계좌(자금 세탁 의심 계좌)")
         risk_level = "위험(Danger)"

@@ -243,7 +243,7 @@ class GraphRAGRetriever:
         rank = self._nz(d.get("rank_pos"), 0)
         pct = (rank / total * 100) if total else 0.0
         lines = [
-            f"  · 모델 의심도(네트워크 학습): {prob:.2%}  (전체 {total:,}개 계좌 중 상위 {pct:.2f}%)",
+            f"  · 모델 의심도(네트워크 학습): {min(prob, 0.9999):.2%}  (전체 {total:,}개 계좌 중 상위 {pct:.2f}%)",
             "    └─ 해석: GraphSAGE 가 이 계좌의 '거래 행태 + 주변 자금 흐름 구조'(팬인/팬아웃,",
             "       경유 비율, 역외·환치기 패턴)를 학습한 결과, 과거 확인된 자금세탁 계좌들과",
             "       구조적으로 유사하다는 의미입니다. 검토 대상 선별 신호이며, 확정은 거래내역 검토 필요.",
@@ -313,6 +313,79 @@ class GraphRAGRetriever:
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
+    # 핵심 의심 근거 요약 + 우선순위별 권고 조치 (결정적 생성 — 보고서 항상 포함)
+    # ------------------------------------------------------------------
+    def _key_grounds(self, q0, q1, q2, q4, sig_eval) -> list:
+        """데이터에서 검증 가능한 구체적 의심 근거를 강한 순으로 추린다."""
+        g = []
+        in_l = self._nz(q1.get("in_l"), 0); out_l = self._nz(q1.get("out_l"), 0)
+        if in_l or out_l:
+            seg = []
+            if in_l:
+                seg.append(f"수취측 {in_l}건")
+            if out_l:
+                seg.append(f"송금측 {out_l}건")
+            g.append(f"자금세탁 확정 거래 직접 연루 ({', '.join(seg)})")
+        ln = self._nz(q2.get("l_neighbors"), 0)
+        if ln:
+            ids = [x for x in (q2.get("ids") or []) if x]
+            g.append(f"자금세탁 확정 계좌 {ln}개와 직접 거래"
+                     + (f" (예: {', '.join(str(i) for i in ids[:3])})" if ids else ""))
+        fo = self._nz(q4.get("fo"), 0); afo = self._nz(q4.get("avg_fo"), 0.0)
+        if afo > 0 and fo >= afo * 3:
+            g.append(f"{fo}개 계좌로 분산 송금 — 전체 평균({afo:.1f}개)의 {fo/afo:.1f}배 (팬아웃 허브)")
+        fi = self._nz(q4.get("fi"), 0); afi = self._nz(q4.get("avg_fi"), 0.0)
+        if afi > 0 and fi >= afi * 3:
+            g.append(f"{fi}개 계좌로부터 자금 집결 — 전체 평균({afi:.1f}개)의 {fi/afi:.1f}배 (팬인/스머핑)")
+        # 변별력 높은 모티프 1개 보강
+        for s in sig_eval:
+            if s.get("lift") and s["lift"] >= 1.3:
+                g.append(f"{s['label']} — 해당 신호 보유 계좌 세탁율 {s['rate']:.0%} (평균 대비 ×{s['lift']:.1f})")
+                break
+        if not g:
+            prob = self._nz(q0.get("fraud_prob"), 0.0)
+            g.append(f"모델 의심도 {prob:.1%} (네트워크 학습 기반 자동 선별 — 검증 가능한 행동 근거는 미약)")
+        return g[:4]
+
+    def _recommend_actions(self, tier, acc, out_l, in_l, q2, q4) -> list:
+        """수사 우선순위(tier)와 실제 근거를 반영한 구체적 권고 조치."""
+        ids = [x for x in (q2.get("ids") or []) if x]
+        id_str = (", ".join(str(i) for i in ids[:3])) if ids else ""
+        fo = self._nz(q4.get("fo"), 0); afo = self._nz(q4.get("avg_fo"), 0.0)
+        is_hub = afo > 0 and fo >= afo * 3
+
+        if tier == "confirmed":
+            a = [f"해당 계좌({acc})의 출금·이체 거래를 일시 제한하고 자금 동결 여부를 즉시 검토한다."]
+            seg = (f"수취 {in_l}건" if in_l else "") + (" 및 " if (in_l and out_l) else "") + (f"송금 {out_l}건" if out_l else "")
+            a.append(f"자금세탁 확정 거래({seg})의 원본 거래내역·증빙을 확보하고 자금 출처와 사용처를 추적한다.")
+            if id_str:
+                a.append(f"직접 연결된 자금세탁 확정 계좌({id_str})를 동반 조사 대상에 포함한다.")
+            if is_hub:
+                a.append(f"{fo}개 분산 송금 수취 계좌의 후속 자금 이동(2차 분산 여부)을 추적한다.")
+            a.append("특정금융정보법 제4조에 따라 금융정보분석원(KoFIU)에 의심거래보고(STR)를 즉시 제출한다.")
+        elif tier == "network":
+            a = [f"해당 계좌({acc})의 거래 모니터링을 강화하고 추가 이체 발생 시 사전 점검한다."]
+            if id_str:
+                a.append(f"연결된 자금세탁 확정 계좌({id_str})와의 거래 내역을 정밀 대조하고 공모 여부를 검토한다.")
+            if is_hub:
+                a.append(f"{fo}개 계좌로의 분산 송금 경로와 수취 계좌 위험도를 추적한다.")
+            a.append("거래내역 정밀 분석 후 혐의가 보강되면 의심거래보고(STR) 제출을 검토한다.")
+        elif tier == "motif":
+            a = [f"해당 계좌({acc})의 거래내역을 정밀 분석하여 팬인/팬아웃·경유 패턴의 자금 흐름을 확인한다."]
+            a.append("주요 거래 상대 계좌의 위험도와 거래 목적의 실재 여부를 확인한다.")
+            a.append("구체적 혐의 근거 확보 시 의심거래보고(STR) 제출을 검토한다.")
+        elif tier == "review":
+            a = [f"해당 계좌({acc})의 원본 거래내역을 인적 검토하여 모델 의심도의 실질 근거를 확인한다."]
+            a.append("일정 기간(예: 30일) 거래 모니터링을 강화하고 패턴 변화를 관찰한다.")
+            a.append("변별력 있는 행동·네트워크 근거가 확인되면 의심거래보고(STR)를 검토한다.")
+        elif tier == "monitor":
+            a = [f"해당 계좌({acc})를 상시 모니터링 대상으로 등록하고 임계 초과 거래를 점검한다.",
+                 "다음 평가 주기에 위험도 변화를 재확인한다."]
+        else:
+            a = [f"해당 계좌({acc})는 정기 점검 대상으로 유지한다."]
+        return a
+
+    # ------------------------------------------------------------------
     def format_context(self, node_idx: int, account_id: str = "") -> str:
         if not self._ensure_connected():
             return ""
@@ -328,30 +401,36 @@ class GraphRAGRetriever:
 
         baseline, sig_eval, disc = self._signal_assessment(q0)
         model_prob = self._nz(q0.get("fraud_prob"), 0.0)
-        own_l = self._nz(q1.get("out_l"), 0) + self._nz(q1.get("in_l"), 0)
-        net_corro = (self._nz(q2.get("l_neighbors"), 0) > 0) or bool(q3) or (own_l > 0)
+        out_l = self._nz(q1.get("out_l"), 0)
+        in_l = self._nz(q1.get("in_l"), 0)
+        own_l = out_l + in_l
+        l_neighbors = self._nz(q2.get("l_neighbors"), 0)
+        net_corro = (l_neighbors > 0) or bool(q3) or (own_l > 0)
 
         if (own_l > 0) and model_prob >= 0.7:
-            priority = "고위험 — 본 계좌 거래에서 세탁 거래 직접 확인"
-            judge = "본 계좌의 거래 중 세탁으로 확정된 거래가 있어 즉시 조사 권고."
+            tier, priority = "confirmed", "고위험 — 본 계좌 거래에서 자금세탁 확정 거래 직접 확인"
+            judge = "본 계좌가 자금세탁으로 확정된 거래에 직접 연루되어 있어 즉시 조사가 필요함."
         elif net_corro and model_prob >= 0.7:
-            priority = "고위험 — 네트워크 연계 근거 확인"
-            judge = "직접 연결된 세탁 계좌 또는 세탁 계좌로의 자금 경로가 확인됨. 우선 조사 권고."
+            tier, priority = "network", "고위험 — 자금세탁 계좌와의 네트워크 연계 확인"
+            judge = "자금세탁 확정 계좌와 직접 연결되어 있어(또는 자금 경로 존재) 우선 조사가 필요함."
         elif disc >= 2 and model_prob >= 0.7:
-            priority = "중~고위험 — 자금세탁 모티프 확인"
-            judge = "기저율 대비 변별력 있는 자금세탁 모티프(팬인/아웃·경유 등)가 복수 확인됨."
+            tier, priority = "motif", "중~고위험 — 자금세탁 모티프 복수 확인"
+            judge = "기저율 대비 변별력 있는 자금세탁 모티프(팬인/팬아웃·경유 등)가 복수 확인됨."
         elif model_prob >= 0.7:
-            priority = "검토 필요 (1차 의심 후보)"
-            judge = ("모델 의심도는 높으나, 검증 가능한 모티프·네트워크 연계 근거가 충분치 않아 "
-                     "확정 전 거래내역 인적 검토가 필요함.")
+            tier, priority = "review", "검토 필요 (1차 의심 후보)"
+            judge = ("모델 의심도는 높으나 검증 가능한 모티프·네트워크 근거가 충분치 않아 "
+                     "확정 전 거래내역에 대한 인적 검토가 필요함.")
         elif model_prob >= 0.4:
-            priority = "중위험 — 상시 모니터링"
-            judge = "단정적 위험 징후는 없으나 모델 의심도가 중간 수준임."
+            tier, priority = "monitor", "중위험 — 상시 모니터링"
+            judge = "단정적 위험 징후는 없으나 모델 의심도가 중간 수준으로 지속 관찰이 필요함."
         else:
-            priority = "저위험"
+            tier, priority = "low", "저위험"
             judge = "특이 위험 징후 없음."
 
         acc = account_id or (q0.get("account_id") if q0 else "") or ""
+        grounds = self._key_grounds(q0, q1, q2, q4, sig_eval)
+        actions = self._recommend_actions(tier, acc, out_l, in_l, q2, q4)
+
         sections = [
             f"[거래 네트워크 분석 — 분석 대상 계좌 {node_idx}" + (f" ({acc})" if acc else "") + "]",
             "",
@@ -360,6 +439,10 @@ class GraphRAGRetriever:
             f"  · 검증 가능한 모티프 근거: 기저율 대비 변별력 있는 신호 {disc}개",
             f"  · 네트워크 연계 근거     : {'있음' if net_corro else '없음'}",
             f"  · 판단                  : {judge}",
+            "  · 핵심 의심 근거(요약)   :",
+            *[f"      {i}. {g}" for i, g in enumerate(grounds, 1)],
+            "  · 권고 조치(우선순위 반영):",
+            *[f"      {i}. {a}" for i, a in enumerate(actions, 1)],
             "",
             "▶ 1. 계좌 위험 프로파일 (거래 행태·모티프)",
             self._format_q0(q0, sig_eval, baseline),

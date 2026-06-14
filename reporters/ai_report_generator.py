@@ -91,9 +91,10 @@ def _build_messages(
     # Groq 무료 티어 TPM 제한(6,000) 대비 컨텍스트 길이 제한
     # 한국어 1자 ≈ 1.5~2 토큰 기준으로 보수적으로 잡음
     _MAX_RAG_CHARS   = 800    # ≈ 400~500 토큰
-    # 그래프 컨텍스트는 '계좌 위험 프로파일'(구체적 송금액·잔액 이상·위험 백분위)을
-    # 포함하므로, Section II 의 의심 사유 근거로 인용되도록 넉넉히 전달한다.
-    _MAX_GRAPH_CHARS = 1200   # ≈ 600~750 토큰
+    # 그래프 컨텍스트는 '종합 수사 평가'(핵심 의심 근거 요약 + 우선순위별 권고 조치)와
+    # '계좌 위험 프로파일'(모티프·구체 수치)을 포함하므로, II장 근거·IV장 조치가 모두
+    # LLM 에 닿도록 넉넉히 전달한다.
+    _MAX_GRAPH_CHARS = 2000   # ≈ 1000~1300 토큰
 
     user_parts: list[str] = []
 
@@ -517,7 +518,7 @@ def build_sar_payload(
         "report_context": {
             "analysis_date":    datetime.now().strftime("%Y-%m-%d"),
             "target_node_id":   int(selected_idx),
-            "fraud_probability": f"{prob:.2%}",
+            "fraud_probability": f"{min(float(prob), 0.9999):.2%}",  # 100% 단정 회피(선별 점수)
             "risk_level":       risk_level_str,
         },
         "key_risk_factors":   top_features_summary,
