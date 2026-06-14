@@ -34,16 +34,17 @@ def _get_groq_client():
 
     api_key: str | None = None
 
-    # 1) Streamlit secrets
-    try:
-        import streamlit as st  # type: ignore
-        api_key = st.secrets.get("groq", {}).get("api_key")
-    except Exception:
-        pass
+    # 1) 환경변수 (로컬·FastAPI 백엔드 등 — streamlit 미사용 경로에서 먼저 시도해
+    #    streamlit import/secrets 접근에 따른 부작용·경고를 피한다)
+    api_key = os.environ.get("GROQ_API_KEY")
 
-    # 2) 환경변수
+    # 2) Streamlit secrets (Streamlit Cloud 배포 폴백)
     if not api_key:
-        api_key = os.environ.get("GROQ_API_KEY")
+        try:
+            import streamlit as st  # type: ignore
+            api_key = st.secrets.get("groq", {}).get("api_key")
+        except Exception:
+            pass
 
     if not api_key:
         raise EnvironmentError(
