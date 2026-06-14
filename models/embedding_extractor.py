@@ -71,19 +71,37 @@ def build_hybrid_features(orig_feats: np.ndarray, embs: np.ndarray) -> np.ndarra
     return np.hstack([orig_feats, embs]).astype(np.float32)
 
 
+def apply_temperature(probs: np.ndarray, temperature: float = 1.0) -> np.ndarray:
+    """확률에 temperature scaling 적용 (과신 완화 보정).
+
+    predict_proba 출력에서 logit 을 역산해 T 로 나눈 뒤 다시 sigmoid.
+    (XGBoost output_margin 은 base_score 처리 차이로 predict_proba 와 어긋나므로
+     predict_proba 에서 직접 역산한다.) T>1 이면 과신 완화, T==1 이면 무변환.
+    단조 변환이라 순위(AUC)는 보존된다. T 는 검증셋 NLL 최소화로 적합.
+    """
+    if temperature is None or abs(float(temperature) - 1.0) < 1e-6:
+        return probs
+    eps = 1e-6
+    p = np.clip(probs, eps, 1 - eps)
+    logit = np.log(p / (1 - p))
+    return 1.0 / (1.0 + np.exp(-logit / float(temperature)))
+
+
 def predict_fraud_probs(
     embs: np.ndarray,
     orig_feats: np.ndarray,
     xgb_model,
     scaler,
+    temperature: float = 1.0,
 ) -> np.ndarray:
     """GNN 임베딩 + 원본 피처 -> 사기 확률(class 1). 학습 전처리와 동일.
 
     Args:
         embs:       (N, 64) GNN 임베딩
-        orig_feats: (N, 10) 원본 집계 피처 (graph_dict["x"], 이미 1차 스케일됨)
+        orig_feats: (N, 노드피처) 원본 집계 피처 (graph_dict["x"], 이미 1차 스케일됨)
         xgb_model:  학습된 XGBClassifier
-        scaler:     fraud_model.pkl 의 74-dim StandardScaler (없으면 생략)
+        scaler:     fraud_model.pkl 의 StandardScaler (없으면 생략)
+        temperature: 과신 완화 보정 계수 (fraud_model.pkl 의 'temperature', 기본 1.0=무변환)
 
     Returns:
         (N,) 사기 확률 배열
@@ -91,7 +109,8 @@ def predict_fraud_probs(
     X = build_hybrid_features(orig_feats, embs)
     if scaler is not None:
         X = scaler.transform(X).astype(np.float32)
-    return xgb_model.predict_proba(X)[:, 1]
+    probs = xgb_model.predict_proba(X)[:, 1]
+    return apply_temperature(probs, temperature)
 
 
 def hybrid_feature_names(all_feature_names: list) -> list:

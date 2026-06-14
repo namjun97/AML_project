@@ -34,8 +34,9 @@ def load_resources(
     xgb_model = xgb_data["xgb_model"]
     all_feature_names = xgb_data["all_feature_names"]
     scaler = xgb_data.get("scaler")
+    temperature = xgb_data.get("temperature", 1.0)  # 과신 완화 보정 계수
 
-    return graph_dict, extractor, xgb_model, all_feature_names, scaler
+    return graph_dict, extractor, xgb_model, all_feature_names, scaler, temperature
 
 
 # 2. 전체 노드 임베딩 사전 계산
@@ -60,6 +61,7 @@ def get_sorted_test_nodes(
     _xgb_model,
     _all_feature_names: list,
     _scaler=None,
+    _temperature: float = 1.0,
 ) -> pd.DataFrame:
     test_mask = _graph_dict["test_mask"]
     test_idx = np.where(test_mask.numpy())[0]
@@ -70,8 +72,8 @@ def get_sorted_test_nodes(
     # 원본 노드 피처 전체 (graph_dict["x"] 가 곧 노드 피처 — SAML 11개)
     test_orig = _graph_dict["x"][test_idx].numpy()
 
-    # 사기 확률 예측 — 학습과 동일한 [원본, 임베딩] 순서 + 스케일러 (단일 헬퍼)
-    probs = predict_fraud_probs(test_embeddings, test_orig, _xgb_model, _scaler)
+    # 사기 확률 예측 — 학습과 동일한 [원본, 임베딩] 순서 + 스케일러 + temperature (단일 헬퍼)
+    probs = predict_fraud_probs(test_embeddings, test_orig, _xgb_model, _scaler, _temperature)
 
     risk_df = pd.DataFrame(
         {

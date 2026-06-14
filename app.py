@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 
 from analysis.network_visualizer import build_fund_flow_network, get_network_stats
 from analysis.shap_analyzer import ShapAnalyzer
-from models.embedding_extractor import build_hybrid_features, hybrid_feature_names
+from models.embedding_extractor import build_hybrid_features, hybrid_feature_names, apply_temperature
 from loaders.resource_loader import (
     get_all_embeddings_cached,
     get_sorted_test_nodes,
@@ -37,7 +37,7 @@ st.title("🛡️ 자금 세탁 거점 분석 대시보드")
 
 # 1. 모델·그래프 데이터 로드 (캐싱)
 
-graph_dict, extractor, xgb_model, all_feature_names, scaler = load_resources()
+graph_dict, extractor, xgb_model, all_feature_names, scaler, temperature = load_resources()
 # 저장된 all_feature_names([emb,orig])를 실제 학습 순서([orig,emb])로 재정렬.
 # 이후 모든 피처 라벨(SHAP/워터폴/SAR)은 feature_names 를 사용해 컬럼과 정렬을 맞춘다.
 feature_names = hybrid_feature_names(all_feature_names)
@@ -45,7 +45,7 @@ all_embs_cached = get_all_embeddings_cached(
     extractor, graph_dict["x"], graph_dict["edge_index"]
 )
 risk_df = get_sorted_test_nodes(
-    all_embs_cached, graph_dict, xgb_model, all_feature_names, scaler
+    all_embs_cached, graph_dict, xgb_model, all_feature_names, scaler, temperature
 )
 # 워치리스트: 의심도 내림차순 상위 N개만 노출 (2.8만개 전체 나열 방지)
 _WATCHLIST_N = 200
@@ -167,7 +167,8 @@ with st.spinner("분석 중......"):
     X_input   = build_hybrid_features(node_orig, node_emb)
     if scaler is not None:
         X_input = scaler.transform(X_input).astype(np.float32)
-    prob      = xgb_model.predict_proba(X_input)[0][1]
+    # 표시용 의심도에 temperature 보정 적용 (SHAP 은 원모델 기준 유지)
+    prob      = float(apply_temperature(xgb_model.predict_proba(X_input)[:, 1], temperature)[0])
 
     # 5-2. SHAP 분석
     analyzer = ShapAnalyzer(xgb_model)
